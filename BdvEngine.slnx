@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BdvEngine/BdvEngine.csproj" />
+  </Folder>
+  <Folder Name="/src/Examples/">
+    <Project Path="src/Examples/CollisionGame/CollisionGame.csproj" />
+    <Project Path="src/Examples/My3DGame/My3DGame.csproj" />
+    <Project Path="src/Examples/MyGame/MyGame.csproj" />
+    <Project Path="src/Examples/StressGame/StressGame.csproj" />
+    <Project Path="src/Examples/TerrainGame/TerrainGame.csproj" />
+  </Folder>
+</Solution>

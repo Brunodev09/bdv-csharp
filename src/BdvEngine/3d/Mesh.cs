@@ -1,0 +1,162 @@
+using Silk.NET.OpenGL;
+
+namespace BdvEngine;
+
+public sealed class Mesh : IDisposable
+{
+    public const int FloatsPerVertex = 8; // pos(3) + normal(3) + uv(2)
+
+    private readonly GL _gl = Gfx.Gl;
+    private readonly float[] _vertexData;
+    private readonly ushort[]? _indexData;
+    private readonly int _vertexCount;
+    private readonly int _indexCount;
+
+    private uint _vao;
+    private uint _vbo;
+    private uint _ibo;
+    private bool _initialized;
+
+    public Mesh(float[] vertices, ushort[]? indices = null)
+    {
+        _vertexData = vertices;
+        _vertexCount = vertices.Length / FloatsPerVertex;
+        _indexData = indices;
+        _indexCount = indices?.Length ?? 0;
+    }
+
+    private unsafe void EnsureGl()
+    {
+        if (_initialized) return;
+        _initialized = true;
+
+        _vao = _gl.GenVertexArray();
+        _vbo = _gl.GenBuffer();
+        _gl.BindVertexArray(_vao);
+        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, _vbo);
+        fixed (float* p = _vertexData)
+            _gl.BufferData(BufferTargetARB.ArrayBuffer, (nuint)(_vertexData.Length * sizeof(float)), p, BufferUsageARB.StaticDraw);
+
+        const uint stride = FloatsPerVertex * sizeof(float);
+        _gl.EnableVertexAttribArray(0);
+        _gl.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, stride, (void*)0);
+        _gl.EnableVertexAttribArray(1);
+        _gl.VertexAttribPointer(1, 3, VertexAttribPointerType.Float, false, stride, (void*)(3 * sizeof(float)));
+        _gl.EnableVertexAttribArray(2);
+        _gl.VertexAttribPointer(2, 2, VertexAttribPointerType.Float, false, stride, (void*)(6 * sizeof(float)));
+
+        if (_indexData != null)
+        {
+            _ibo = _gl.GenBuffer();
+            _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, _ibo);
+            fixed (ushort* p = _indexData)
+                _gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(_indexData.Length * sizeof(ushort)), p, BufferUsageARB.StaticDraw);
+        }
+
+        _gl.BindVertexArray(0);
+    }
+
+    public unsafe void Draw()
+    {
+        EnsureGl();
+        _gl.BindVertexArray(_vao);
+        if (_ibo != 0)
+        {
+            _gl.DrawElements(PrimitiveType.Triangles, (uint)_indexCount, DrawElementsType.UnsignedShort, null);
+            GLStats.IncDrawCalls(_indexCount);
+        }
+        else
+        {
+            _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_vertexCount);
+            GLStats.IncDrawCalls(_vertexCount);
+        }
+        _gl.BindVertexArray(0);
+    }
+
+    public void Dispose()
+    {
+        if (_vbo != 0) _gl.DeleteBuffer(_vbo);
+        if (_ibo != 0) _gl.DeleteBuffer(_ibo);
+        if (_vao != 0) _gl.DeleteVertexArray(_vao);
+    }
+
+    public static Mesh Cube()
+    {
+        var v = new List<float>();
+        var idx = new List<ushort>();
+
+        void Face(float[] p0, float[] p1, float[] p2, float[] p3, float[] n)
+        {
+            ushort baseIdx = (ushort)(v.Count / FloatsPerVertex);
+            void Push(float[] p, float u, float vv)
+            {
+                v.Add(p[0]); v.Add(p[1]); v.Add(p[2]);
+                v.Add(n[0]); v.Add(n[1]); v.Add(n[2]);
+                v.Add(u); v.Add(vv);
+            }
+            Push(p0, 0, 0); Push(p1, 1, 0); Push(p2, 1, 1); Push(p3, 0, 1);
+            idx.Add(baseIdx); idx.Add((ushort)(baseIdx + 1)); idx.Add((ushort)(baseIdx + 2));
+            idx.Add(baseIdx); idx.Add((ushort)(baseIdx + 2)); idx.Add((ushort)(baseIdx + 3));
+        }
+
+        Face(new[] { -0.5f, -0.5f,  0.5f }, new[] {  0.5f, -0.5f,  0.5f }, new[] {  0.5f,  0.5f,  0.5f }, new[] { -0.5f,  0.5f,  0.5f }, new[] { 0f, 0f, 1f });
+        Face(new[] {  0.5f, -0.5f, -0.5f }, new[] { -0.5f, -0.5f, -0.5f }, new[] { -0.5f,  0.5f, -0.5f }, new[] {  0.5f,  0.5f, -0.5f }, new[] { 0f, 0f, -1f });
+        Face(new[] { -0.5f,  0.5f,  0.5f }, new[] {  0.5f,  0.5f,  0.5f }, new[] {  0.5f,  0.5f, -0.5f }, new[] { -0.5f,  0.5f, -0.5f }, new[] { 0f, 1f, 0f });
+        Face(new[] { -0.5f, -0.5f, -0.5f }, new[] {  0.5f, -0.5f, -0.5f }, new[] {  0.5f, -0.5f,  0.5f }, new[] { -0.5f, -0.5f,  0.5f }, new[] { 0f, -1f, 0f });
+        Face(new[] {  0.5f, -0.5f,  0.5f }, new[] {  0.5f, -0.5f, -0.5f }, new[] {  0.5f,  0.5f, -0.5f }, new[] {  0.5f,  0.5f,  0.5f }, new[] { 1f, 0f, 0f });
+        Face(new[] { -0.5f, -0.5f, -0.5f }, new[] { -0.5f, -0.5f,  0.5f }, new[] { -0.5f,  0.5f,  0.5f }, new[] { -0.5f,  0.5f, -0.5f }, new[] { -1f, 0f, 0f });
+
+        return new Mesh(v.ToArray(), idx.ToArray());
+    }
+
+    public static Mesh Plane(float size = 1f)
+    {
+        float h = size / 2f;
+        var v = new float[]
+        {
+            -h, 0, -h,  0, 1, 0,  0, 0,
+             h, 0, -h,  0, 1, 0,  1, 0,
+             h, 0,  h,  0, 1, 0,  1, 1,
+            -h, 0,  h,  0, 1, 0,  0, 1,
+            -h, 0,  h,  0, -1, 0,  0, 0,
+             h, 0,  h,  0, -1, 0,  1, 0,
+             h, 0, -h,  0, -1, 0,  1, 1,
+            -h, 0, -h,  0, -1, 0,  0, 1,
+        };
+        var idx = new ushort[] { 0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7 };
+        return new Mesh(v, idx);
+    }
+
+    public static Mesh Sphere(int segments = 16, int rings = 12)
+    {
+        var v = new List<float>();
+        var idx = new List<ushort>();
+
+        for (int r = 0; r <= rings; r++)
+        {
+            float phi = r / (float)rings * MathF.PI;
+            float sp = MathF.Sin(phi), cp = MathF.Cos(phi);
+            for (int s = 0; s <= segments; s++)
+            {
+                float theta = s / (float)segments * MathF.Tau;
+                float st = MathF.Sin(theta), ct = MathF.Cos(theta);
+                float x = ct * sp, y = cp, z = st * sp;
+                float u = s / (float)segments, vv = r / (float)rings;
+                v.Add(x * 0.5f); v.Add(y * 0.5f); v.Add(z * 0.5f);
+                v.Add(x); v.Add(y); v.Add(z);
+                v.Add(u); v.Add(vv);
+            }
+        }
+
+        for (int r = 0; r < rings; r++)
+        for (int s = 0; s < segments; s++)
+        {
+            ushort a = (ushort)(r * (segments + 1) + s);
+            ushort b = (ushort)(a + segments + 1);
+            idx.Add(a); idx.Add(b); idx.Add((ushort)(a + 1));
+            idx.Add((ushort)(a + 1)); idx.Add(b); idx.Add((ushort)(b + 1));
+        }
+
+        return new Mesh(v.ToArray(), idx.ToArray());
+    }
+}
