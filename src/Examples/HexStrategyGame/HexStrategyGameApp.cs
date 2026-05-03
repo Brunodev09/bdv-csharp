@@ -254,6 +254,15 @@ public sealed class HexStrategyGame : Game, IMessageHandler
                 new Color(255, 230, 60, (byte)alpha));
         }
 
+        // Connector line: selected → hovered. Draw.Line flushes after SpriteBatcher,
+        // so it lands on top of the hex grid without any layer juggling.
+        if (_selCol >= 0 && _hoverCol >= 0 && (_selCol != _hoverCol || _selRow != _hoverRow))
+        {
+            var (x1, y1) = HexCenter(_selCol,   _selRow);
+            var (x2, y2) = HexCenter(_hoverCol, _hoverRow);
+            Draw.Line(x1, y1, x2, y2, new Color(255, 230, 60, 220));
+        }
+
         DrawTextDemo();
         _gui.Render(Camera, ViewportWidth, ViewportHeight);
     }
@@ -293,6 +302,13 @@ public sealed class HexStrategyGame : Game, IMessageHandler
         x = col * COL_STEP + (row & 1) * ODD_ROW_X + HEX_W * 0.5f - TILE_W * 0.5f;
         y = row * ROW_STEP + HEX_H * 0.5f - TILE_H * 0.5f;
     }
+
+    /// <summary>World-space center of a hex (odd-r offset, pointy-top). Use this
+    /// to position anything that should sit "on" a tile — line endpoints, unit
+    /// sprites, label anchors, path waypoints.</summary>
+    private static (float X, float Y) HexCenter(int col, int row)
+        => (col * COL_STEP + (row & 1) * ODD_ROW_X + HEX_W * 0.5f,
+            row * ROW_STEP + HEX_H * 0.5f);
 
     // Filled pointy-top hex via 6-triangle fan from the center. Renders through Draw,
     // which flushes after the SpriteBatcher so the fill fully covers the texture.
