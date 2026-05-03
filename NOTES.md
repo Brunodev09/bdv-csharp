@@ -175,6 +175,24 @@ Key properties:
   worst case = ~150 MB. Acceptable on unified memory; would need LRU eviction
   for multi-million-tile streaming worlds.
 
+### Render order with the new Gui library (HexStrategyGame example)
+
+```
+TileMap.Render            ← direct GL, hex tiles
+Gui.Update / state         ← input dispatch, behaviors mutate RenderScale, etc.
+DrawTextDemo (animated banner via TextRenderer.DrawScreen)
+Gui.Render                 ← walks tree, queues into SpriteBatcher + Draw
+                                Panel push UIBack + Scissor.Push (flushes pending)
+                                children push UI (text/images) and UIBack (button bgs)
+                                Scissor.Pop (flushes again)
+                                Draw.RectOutline (border) — queued for final Draw.Flush
+
+End of frame:
+  SpriteBatcher.Flush     → Ground → Object (Y-sorted) → UIBack → UI
+  Draw.Flush              → debug primitives + Gui borders
+  ImGui.Render            → engine stats overlay only
+```
+
 ### Render order in TerrainGame
 
 ```
@@ -335,9 +353,11 @@ MessageBus.Update(delta);                // dispatches queued messages once per 
 `Message.SendCritical` dispatches synchronously (rare, used for time-sensitive
 things).
 
-### UI
+### UI — legacy ImGui helpers (`UI/UI.cs`)
 
-ImGui-flavored declarative helpers:
+ImGui-flavored declarative helpers. **Kept as fallback** (engine stats overlay,
+`My3DGame` which has no 2D overlay pass yet). New code should prefer
+`BdvEngine.Gui` below.
 
 ```csharp
 var panel = UI.Panel(UIAnchor.TopLeft);
@@ -349,6 +369,179 @@ UI.Button(panel, "Go", OnClick);
 UI.Slider(panel, "Speed", value, 60f, 1200f, v => state = v);
 UI.Spacer(panel);
 ```
+
+### Gui — engine-native UI library (`Gui/`)
+
+Tree of rectangles in `BdvEngine.Gui` namespace; absolute positions in screen
+pixels (no flex/grid); chainable builders + callbacks. Renders entirely through
+the existing `SpriteBatcher` + `Draw` pipeline (no ImGui dep). Game code
+constructs one `Root`, builds the tree, then calls `Update` and `Render`
+each frame.
+
+```csharp
+var root = new Root().WithFont(font);
+
+var panel = new Panel(16, 16, 320, 240)
+    .WithBackground(new Color(18, 22, 32, 255))
+    .WithBorder(new Color(95, 115, 160, 255), 2f);
+
+panel.Add(new Label(14, 10, "Inventory").WithScale(0.46f));
+panel.Add(new LiveLabel(14, 60, () => $"Gold: {gold}").WithScale(0.30f));
+panel.Add(new Image(14, 90, 64, 64, atlasMaterial).WithSubRect(2, 0, 6, 10));
+panel.Add(new Button(14, 160, 120, 28, "Use")
+    .WithFont(font, 0.30f)
+    .OnClick(OnUse)
+    .AddBehavior(new PulseOnHoverBehavior()));
+panel.Add(new Slider(14, 200, 280, 14, 0f, 100f, 50f).OnChange(v => volume = v));
+panel.Add(new Checkbox(14, 220, 200, 18, "Show grid", true).OnChange(v => showGrid = v));
+panel.Add(new Arrow(160, 100, 28, ArrowDirection.Left).OnClick(() => Step(-1)));
+
+root.Add(panel);
+
+// Game loop
+public override void Update(double dt) { /* ... */ root.Update(Camera, ViewportWidth, ViewportHeight); }
+public override void Render(Shader s)  { /* ... */ root.Render(Camera, ViewportWidth, ViewportHeight); }
+```
+
+Widgets:
+
+| Widget | Use |
+|---|---|
+| `Element` | base — `X/Y/Width/Height`, `Visible/Enabled/Pickable`, `RenderScale`, `Behaviors`, `Children` |
+| `Root` | top-level; owns the per-frame `Context`, runs hit testing, holds default `Font` |
+| `Panel` | rect with optional background + border + scissor-clip children (default on) |
+| `Label` | static text via `Font` (engine-baked TTF atlas) |
+| `LiveLabel` | text recomputed each frame from a `Func<string>` |
+| `Image` | textured rect; `WithSubRect(col,row,gridC,gridR)` or `WithUV(...)` for spritesheets |
+| `Button` | three color states (idle/hover/pressed/disabled), centered text, click on mouse-up-inside |
+| `Slider` | drag value, captures input mid-drag, fires `OnChange` per move + `OnRelease` once |
+| `Arrow` | square button with triangle glyph (Up/Down/Left/Right) |
+| `Checkbox` | square box + label; toggles on mouse-up-inside |
+
+Hit testing is depth-first reverse so the topmost child wins; children stay
+clickable even when their parent panel pulses (RenderScale is visual-only).
+
+#### Coordinate system
+
+- All Gui coords are **logical window pixels** (top-left origin, Y down) —
+  same units the rest of the engine reports as `ViewportWidth/Height`.
+- Internally the widgets convert to world space via `Context.ToWorld(...)` and
+  scale by `Context.WorldScale = 1 / camera.Zoom` so panels stay glued to the
+  viewport regardless of camera pan/zoom.
+
+#### Layering / draw order
+
+Backgrounds (Panel/Button/Slider/Arrow/Checkbox fills) push to
+`SpriteLayer.UIBack`; Labels/Images push to `SpriteLayer.UI`; Panel borders go
+to `Draw` (lines, flushed last). Net result inside a frame:
+
+```
+TileMap → game sprites → UIBack (panel bg) → UI (text/image) → Draw (borders)
+```
+
+#### Scissor clipping (`Gui/Scissor.cs`)
+
+`Panel` wraps its children in `Scissor.Push(rect)` / `Scissor.Pop()`, which
+calls `glScissor` against the framebuffer (with Y flip + DPI scale). Each
+push/pop calls `SpriteBatcher.Flush()` so the scissor only affects subsequent
+draws. Nested pushes intersect with the parent rect. Call `panel.NoClip()` to
+opt out (tooltips, popovers).
+
+#### Behavior-style attachables (`IElementBehavior`)
+
+The Gui counterpart to SimObject `IBehavior`. Implement `Update(ctx, owner)` /
+`Render(ctx, owner)`, attach with `element.AddBehavior(myBehavior)`. Behaviors
+run *before* the element's own update so they can mutate state the render then
+reads (e.g., `RenderScale`).
+
+Built-in: `PulseOnHoverBehavior(min, max, period)` — drives `RenderScale` from
+`Anim.Pulse` while `ctx.Hovered == owner`, eases back to 1.0 over `ReleaseTime`
+when un-hovered.
+
+```csharp
+new Button(...).OnClick(handler)
+    .AddBehavior(new PulseOnHoverBehavior(0.94f, 1.08f, 0.9f));
+```
+
+### Text rendering (`Text/`)
+
+Runtime TTF baking via `StbTrueTypeSharp`. ASCII 32–126 baked once into a
+1024×1024 grayscale atlas, expanded to RGBA (white text, alpha = coverage),
+wrapped in a `Material` automatically.
+
+```csharp
+// Load
+var font = Font.LoadDefault("ui", pixelHeight: 64);
+//   Tries assets/font.ttf, then macOS system fonts, then Linux/Windows fallbacks.
+//   Or: new Font("ui", "/path/to/font.ttf", 64); FontManager.Register(font);
+
+// World-space (scales with camera)
+TextRenderer.Draw(font, "HELLO", x, y, scale: 0.5f, Color.White);
+
+// Screen-space (anchored to viewport — HUD, popups, score)
+TextRenderer.DrawScreen(font, "FPS 60", x, y, pixelScale: 0.4f, Color.White,
+    Camera, ViewportWidth, ViewportHeight);
+
+// Animated (per-glyph effects, time-driven)
+TextRenderer.DrawScreen(font, "BDV HEX STRATEGY", cx, top, 0.9f, Color.White,
+    Camera, ViewportWidth, ViewportHeight,
+    new TextAnim {
+        WaveAmplitude = 8f, WaveSpeed = 6f,
+        PopAmount = 0.18f, PopSpeed = 7f,
+        Rainbow = true, RainbowSpeed = 4f,
+        Stagger = 0.08f,
+    },
+    TextAlign.Center);
+```
+
+`TextAnim` effects (compose freely): `WaveAmplitude` (vertical sine bob),
+`PopAmount` (scale pulse around glyph center), `Shake` (per-frame jitter,
+reseeded at 60 Hz so it doesn't strobe), `Rainbow` (per-glyph hue cycle that
+multiplies the user's tint), `Stagger` (per-glyph time offset so effects ripple
+through the string). Static factories: `TextAnim.Wave()`, `Pop()`, `Shaky()`,
+`RainbowText()`. `pixelScale = 1` means "1 source font pixel = 1 screen pixel".
+
+### Procedural animation (`Animation/Anim.cs`, `Behaviors/PulseBehavior.cs`)
+
+Two layers, both engine-internal:
+
+**Stateless `Anim` helpers** — pure functions reading `Time.TotalF` by default;
+pass an explicit `t` for per-instance lifetimes:
+
+```csharp
+sprite.Transform.Scale = Vector3.One * Anim.Pulse(0.9f, 1.1f, period: 1.5f);
+button.Y = baseY + Anim.SinWave(amplitude: 4f, period: 2f);
+color.A = (byte)(255 * Anim.PingPong(0.4f, 1f, period: 1.0f));
+float t = Anim.Ramp(spawnTime, duration: 0.4f);
+float k = Anim.Ease.OutBack(t);
+```
+
+Functions: `Pulse(min, max, period, phase)`, `PingPong(min, max, period, phase)`,
+`Ramp(start, duration)`, `SinWave(amplitude, period, phase)`. Easings under
+`Anim.Ease`: `InOutSine`, `InOutQuad`, `OutBack`, `OutBounce`.
+
+**`PulseBehavior`** — wraps the breathing-highlight case for SimObjects.
+Captures the owner's *base* `Transform.Scale` on first update and modulates
+it, so it composes with whatever scale you set initially:
+
+```csharp
+unit.AddBehavior(new PulseBehavior(min: 0.92f, max: 1.08f, period: 1.2f));
+// later:
+pulse.Enabled = false; // freeze back to base scale
+```
+
+Registered with `BehaviorManager` so JSON-defined scenes can use `"type": "pulse"`.
+
+### Time (`Time.cs`)
+
+Global monotonic clock advanced once per frame in `Engine.OnUpdate`:
+
+- `Time.Total` (double) — seconds since start
+- `Time.TotalF` (float) — same, cast for math
+- `Time.Delta` — last frame's delta in seconds
+
+Anything that needs "current time" — animations, particles, custom shaders —
+reads it without threading delta through every call site.
 
 ### Behaviors
 
@@ -375,13 +568,14 @@ A SimObject typically has one Component (its visual) and 0+ Behaviors.
 
 | Example | What it shows |
 |---|---|
-| `MyGame` | Animated duck, custom shader (crate), parent/child rotation, particles, all `Draw.*` shapes, UI panel, FPS overlay |
-| `My3DGame` | 3D orbiting cube hierarchy with sphere child, Phong lighting, ground plane |
-| `CollisionGame` | 7 walls + 3 boxes + 4 balls bouncing, kinematic player, raycast (no flicker) |
-| `StressGame` | 5000 particles, sliders, deltaTime-correct |
-| `TerrainGame` | 1024×1024 procedural world: heightmap + biomes, rivers carved downhill, beaches, cities with buildings (Y-sorted Object layer), wandering humans, mouse hover/click tile selection, LOD swap at low zoom |
+| `MyGame` | Animated duck, custom shader (crate), parent/child rotation, particles, all `Draw.*` shapes, **`Gui` panel** (label + button + slider + checkbox), FPS overlay |
+| `My3DGame` | 3D orbiting cube hierarchy with sphere child, Phong lighting, ground plane. *Still uses ImGui* (no 2D overlay pass yet) |
+| `CollisionGame` | 7 walls + 3 boxes + 4 balls bouncing, kinematic player, raycast (no flicker), `Gui` info panel |
+| `StressGame` | 5000 particles, **`Gui` slider/checkbox/button panel**, deltaTime-correct |
+| `TerrainGame` | 1024×1024 procedural world: heightmap + biomes, rivers carved downhill, beaches, cities with buildings (Y-sorted Object layer), wandering humans, mouse hover/click tile selection, LOD swap at low zoom, `Gui` info panel |
+| `HexStrategyGame` | 128×128 pointy-top hex world (odd-r offset, view-culled `SpriteBatcher` rendering); 4-noise-layer biome generation across 36 tiles; carved lakes / steepest-descent rivers / volcano clusters; 3-nation civilization layout (capitals + castles + cities + villages, hex-distance dominance map); civilization filter (solid hex fan in faction color); animated text banner; **full `Gui` showcase** (info / filters / preview panels with images, arrows, slider, button, scissor clipping); pulse-on-hover behaviors on buttons/arrows; breathing selection outline via `Anim.Pulse` |
 
-All five build standalone via `dotnet build` of their own csproj. VS Code
+All six build standalone via `dotnet build` of their own csproj. VS Code
 launch configs in `.vscode/launch.json` cover all of them.
 
 ---
@@ -404,6 +598,26 @@ launch configs in `.vscode/launch.json` cover all of them.
   if it matters.
 - **TileMap chunks never unload.** 256 chunks × ~590 KB worst case = ~150
   MB resident on a fully-baked dense map. Acceptable; revisit if maps grow.
+- **`Font.LoadDefault()` requires a TTF on disk.** Tries `assets/font.ttf`
+  first, then macOS / Linux / Windows system paths. If none exist it throws.
+  Drop your own TTF at `assets/font.ttf` for portable builds.
+- **Gui = 2D-only.** `Gui.Root` requires a `Camera2D`. `Game3D` (3D engine)
+  has no 2D overlay pass yet, so `My3DGame` keeps using ImGui as fallback.
+  If you want HUD on 3D, add a 2D ortho pass and feed it a synthetic camera.
+- **`Gui` `Add` returns the *child*** so you can chain into deeper nodes
+  (`panel.Add(button).OnClick(...)` works because `Add` returns the button).
+  Use `WithChildren(c1, c2, ...)` if you want left-to-right adds that return
+  the parent. `AddBehavior(b)` returns the *owner* element for chainability —
+  capture the behavior reference *before* the chain if you need to mutate it.
+- **`Time.Total` is uncapped wall-time.** A long pause (debugger break, alt-tab)
+  produces a large `Time.Delta` on resume. If your game pauses on focus loss,
+  zero or skip that delta yourself.
+- **`SpriteBatcher.DrawSolid`** lazily creates a 1×1 white texture +
+  `MaterialManager.Register`'d material on first call. Safe to call any time
+  the GL context exists.
+- **`SpriteLayer.UIBack` is reserved for UI backgrounds.** Don't push gameplay
+  sprites into it expecting Y-sort behavior — it's insertion-order per-texture
+  like Ground/UI, not sorted like Object.
 
 ---
 
@@ -425,3 +639,4 @@ Target framework: `net10.0`. Requires:
 - Silk.NET 2.23 (Input / OpenGL / OpenAL / Windowing / OpenGL.Extensions.ImGui)
 - Silk.NET.OpenAL.Soft.Native 1.21+
 - StbImageSharp 2.30+
+- StbTrueTypeSharp 1.26+ (TTF baking for the `Font` system)
