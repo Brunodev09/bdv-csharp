@@ -85,10 +85,27 @@ public sealed class CollisionGame : Game
 
         _scene.Load();
 
-        var panel = UI.Panel(UIAnchor.BottomLeft);
-        UI.Heading(panel, "Collision Demo");
-        UI.Text(panel, "WASD to move | All physics through engine behaviors");
-        UI.TextLive(panel, () => $"Player: {_player.Transform.Position.X:F0},{_player.Transform.Position.Y:F0}  |  Ray: {(_ray.HasHit ? "HIT" : "miss")}");
+        BuildGui();
+    }
+
+    private Font _font = null!;
+    private BdvEngine.Gui.Root _gui = null!;
+
+    private void BuildGui()
+    {
+        _font = Font.LoadDefault();
+        _gui = new BdvEngine.Gui.Root().WithFont(_font);
+
+        var panel = new BdvEngine.Gui.Panel(16, 16, 460, 100)
+            .WithBackground(new Color(18, 22, 32, 230))
+            .WithBorder(new Color(95, 115, 160, 255), 2f);
+        panel.Add(new BdvEngine.Gui.Label(14, 10, "Collision Demo").WithScale(0.42f));
+        panel.Add(new BdvEngine.Gui.Label(14, 40, "WASD to move | All physics through engine behaviors")
+            .WithScale(0.26f).WithColor(new Color(180, 190, 210, 255)));
+        panel.Add(new BdvEngine.Gui.LiveLabel(14, 66, () =>
+            $"Player: {_player.Transform.Position.X:F0},{_player.Transform.Position.Y:F0}  |  Ray: {(_ray.HasHit ? "HIT" : "miss")}"
+        ).WithScale(0.26f).WithColor(new Color(220, 225, 240, 255)));
+        _gui.Add(panel);
     }
 
     private static SimObject BuildPhysicsObject(int id, string name,
@@ -128,11 +145,13 @@ public sealed class CollisionGame : Game
         _ray.TargetX = world.X;
         _ray.TargetY = world.Y;
         _scene.Update(deltaTime);
+        _gui.Update(Camera, ViewportWidth, ViewportHeight);
     }
 
     public override void Render(Shader shader)
     {
         _scene.Render(shader);
         if (++_frame == 120) Screenshot.PendingPath = "/tmp/collision.ppm";
+        _gui.Render(Camera, ViewportWidth, ViewportHeight);
     }
 }

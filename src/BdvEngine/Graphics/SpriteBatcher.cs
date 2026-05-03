@@ -3,7 +3,7 @@ using Silk.NET.OpenGL;
 
 namespace BdvEngine;
 
-public enum SpriteLayer { Ground, Object, UI }
+public enum SpriteLayer { Ground, Object, UIBack, UI }
 
 /// <summary>
 /// Layered sprite batcher.
@@ -41,6 +41,8 @@ public static class SpriteBatcher
 
     private static readonly Dictionary<string, Batch> _groundBatches = new();
     private static readonly List<Batch> _groundOrder = new();
+    private static readonly Dictionary<string, Batch> _uiBackBatches = new();
+    private static readonly List<Batch> _uiBackOrder = new();
     private static readonly Dictionary<string, Batch> _uiBatches = new();
     private static readonly List<Batch> _uiOrder = new();
     private static readonly List<ObjectEntry> _objectEntries = new();
@@ -50,6 +52,29 @@ public static class SpriteBatcher
     private static uint _ebo;
     private static BatchSpriteShader? _batchShader;
     private static bool _initialized;
+    private static Material? _solidMat;
+
+    /// <summary>1×1 white material — useful for solid colored quads pushed into the
+    /// regular batcher (so they share insertion-order with sprites/text).</summary>
+    private static Material GetSolidMaterial()
+    {
+        if (_solidMat != null) return _solidMat;
+        const string texName = "__sprite_solid__";
+        var tex = Texture.CreateBlank(texName, 1, 1);
+        Span<byte> white = stackalloc byte[] { 255, 255, 255, 255 };
+        tex.UploadRgba(1, 1, white);
+        TextureManager.Register(texName, tex);
+        _solidMat = new Material("__sprite_solid_mat__", texName, Color.White);
+        MaterialManager.Register(_solidMat);
+        return _solidMat;
+    }
+
+    /// <summary>Push a solid-color quad through the batcher. Layer/sortY behave the
+    /// same as DrawTexture. Use for UI fills that must respect SpriteBatcher draw
+    /// order (i.e. panels that sit *behind* their child labels/images).</summary>
+    public static void DrawSolid(float x, float y, float width, float height, Color color,
+        SpriteLayer layer = SpriteLayer.UI, float sortY = 0f)
+        => DrawTextureUV(GetSolidMaterial(), 0f, 0f, 1f, 1f, x, y, width, height, color, layer, sortY);
 
     private static unsafe void EnsureInit()
     {
@@ -164,8 +189,14 @@ public static class SpriteBatcher
             return;
         }
 
-        var dict  = layer == SpriteLayer.UI ? _uiBatches : _groundBatches;
-        var order = layer == SpriteLayer.UI ? _uiOrder   : _groundOrder;
+        Dictionary<string, Batch> dict;
+        List<Batch> order;
+        switch (layer)
+        {
+            case SpriteLayer.UI:      dict = _uiBatches;     order = _uiOrder;     break;
+            case SpriteLayer.UIBack:  dict = _uiBackBatches; order = _uiBackOrder; break;
+            default:                  dict = _groundBatches; order = _groundOrder; break;
+        }
 
         if (!dict.TryGetValue(key, out var batch))
         {
@@ -189,12 +220,14 @@ public static class SpriteBatcher
     /// <summary>Submit all queued sprites for the frame.</summary>
     public static unsafe void Flush()
     {
-        bool anything = _groundOrder.Count > 0 || _objectEntries.Count > 0 || _uiOrder.Count > 0;
+        bool anything = _groundOrder.Count > 0 || _objectEntries.Count > 0
+                        || _uiBackOrder.Count > 0 || _uiOrder.Count > 0;
         if (!anything) return;
         EnsureInit();
 
         FlushBatchList(_groundOrder);
         FlushObjectLayer();
+        FlushBatchList(_uiBackOrder);
         FlushBatchList(_uiOrder);
 
         Gfx.Gl.BindVertexArray(0);

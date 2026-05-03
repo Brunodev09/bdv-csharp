@@ -99,6 +99,7 @@ public sealed class Engine
 
     private void OnUpdate(double delta)
     {
+        Time.Advance(delta);
         RigidBodyBehavior.BeginFrame();
         MessageBus.Update(delta);
         AudioManager.Update();
@@ -125,6 +126,10 @@ public sealed class Engine
 
         var size = _window.Size;          // logical (world-space) size
         var fb = _window.FramebufferSize; // physical pixels (retina-aware)
+        Gfx.WindowWidth = size.X;
+        Gfx.WindowHeight = size.Y;
+        Gfx.FramebufferWidth = fb.X;
+        Gfx.FramebufferHeight = fb.Y;
 
         // Viewport = physical pixels (crisp rendering on retina).
         _gl.Viewport(0, 0, (uint)fb.X, (uint)fb.Y);

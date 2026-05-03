@@ -91,10 +91,32 @@ public sealed class HexStrategyGame : Game, IMessageHandler
     private int _hoverCol = -1, _hoverRow = -1;
     private int _selCol = -1, _selRow = -1;
 
+    private Font? _font;
+    private BdvEngine.Gui.Root _gui = null!;
+    private BdvEngine.Gui.Label _previewLabel = null!;
+    private BdvEngine.Gui.Image _previewImage = null!;
+    private int _previewTile;
+
     public override void Init()
     {
         _sheet = new Material("hex_sheet", "hex_tileset.png", Color.White);
         MaterialManager.Register(_sheet);
+
+        // Try a project-local font first, then fall back to a system font so the demo
+        // shows real text out of the box. Drop your own TTF at assets/font.ttf to use it.
+        string[] candidates =
+        {
+            Path.Combine(AppContext.BaseDirectory, "assets", "font.ttf"),
+            "/System/Library/Fonts/Supplemental/Andale Mono.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        };
+        foreach (var p in candidates)
+        {
+            if (!File.Exists(p)) continue;
+            _font = new Font("ui", p, 64);
+            FontManager.Register(_font);
+            break;
+        }
 
         _tiles = new Tile[MAP_W * MAP_H];
         _height = new float[MAP_W * MAP_H];
@@ -104,6 +126,8 @@ public sealed class HexStrategyGame : Game, IMessageHandler
         _civMap = new byte[MAP_W * MAP_H];
         _domMap = new sbyte[MAP_W * MAP_H];
         Generate(_seed);
+
+        BuildGui();
 
         float worldW = MAP_W * COL_STEP + ODD_ROW_X;
         float worldH = (MAP_H - 1) * ROW_STEP + HEX_H;
@@ -124,50 +148,8 @@ public sealed class HexStrategyGame : Game, IMessageHandler
         }
     }
 
-    private void BuildUI()
-    {
-        var filters = UI.Panel(UIAnchor.TopRight);
-        UI.Heading(filters, "Filters");
-        UI.Button(filters, "None",         () => _filter = FilterMode.None);
-        UI.Button(filters, "Civilization", () => _filter = FilterMode.Civilization);
-        UI.TextLive(filters, () => $"Active: {_filter}");
-        UI.Spacer(filters);
-        UI.TextLive(filters, () =>
-        {
-            if (_hoverCol < 0) return "Owner: —";
-            sbyte d = _domMap[_hoverRow * MAP_W + _hoverCol];
-            return d < 0 ? "Owner: unowned" : $"Owner: {NATION_NAMES[d]}";
-        });
-
-        var panel = UI.Panel(UIAnchor.TopLeft);
-        UI.Heading(panel, "Bdv Hex Strategy");
-        UI.Text(panel, $"{MAP_W}x{MAP_H} hex world");
-        UI.Text(panel, "WASD/arrows pan, scroll zoom, click selects");
-        UI.Spacer(panel);
-        UI.Input(panel, "Seed", _seedInput, v => _seedInput = v);
-        UI.Button(panel, "Go", () =>
-        {
-            if (int.TryParse(_seedInput, out int v) && v != 0) { _seed = v; Generate(v); }
-        });
-        UI.Button(panel, "Random", () =>
-        {
-            _seed = new Random().Next(1, 999_999);
-            _seedInput = _seed.ToString();
-            Generate(_seed);
-        });
-        UI.Spacer(panel);
-        UI.TextLive(panel, () => $"Seed: {_seed}  Zoom: {Camera.Zoom:F3}x");
-        UI.TextLive(panel, () =>
-        {
-            if (_hoverCol < 0) return "Hover: —";
-            return $"Hover: ({_hoverCol},{_hoverRow}) {TileAt(_hoverCol, _hoverRow)}{CivLabel(_hoverCol, _hoverRow)}";
-        });
-        UI.TextLive(panel, () =>
-        {
-            if (_selCol < 0) return "Selected: —";
-            return $"Selected: ({_selCol},{_selRow}) {TileAt(_selCol, _selRow)}{CivLabel(_selCol, _selRow)}";
-        });
-    }
+    // BuildUI is now empty — all panels live under _gui (built in BuildGui).
+    private void BuildUI() { }
 
     public override void Update(double deltaTime)
     {
@@ -189,6 +171,18 @@ public sealed class HexStrategyGame : Game, IMessageHandler
         float worldH = (MAP_H - 1) * ROW_STEP + HEX_H;
         Camera.X = Math.Clamp(Camera.X, 0, worldW);
         Camera.Y = Math.Clamp(Camera.Y, 0, worldH);
+
+        // "Breathing" preview tile — pulse the Image's W/H around its center each frame
+        // using the stateless Anim helper. Pure read; no behavior plumbing required.
+        const float PREVIEW_BASE_W = 130f, PREVIEW_BASE_H = 132f;
+        const float PREVIEW_BASE_X = 14f,  PREVIEW_BASE_Y = 50f;
+        float pk = Anim.Pulse(0.92f, 1.06f, period: 1.6f);
+        _previewImage.Width  = PREVIEW_BASE_W * pk;
+        _previewImage.Height = PREVIEW_BASE_H * pk;
+        _previewImage.X = PREVIEW_BASE_X + (PREVIEW_BASE_W - _previewImage.Width)  * 0.5f;
+        _previewImage.Y = PREVIEW_BASE_Y + (PREVIEW_BASE_H - _previewImage.Height) * 0.5f;
+
+        _gui.Update(Camera, ViewportWidth, ViewportHeight);
 
         var mouse = InputManager.GetMousePosition();
         var w = Camera.ScreenToWorld(mouse.X, mouse.Y, ViewportWidth, ViewportHeight);
@@ -241,17 +235,56 @@ public sealed class HexStrategyGame : Game, IMessageHandler
                 cellX, cellY, TILE_W, TILE_H);
         }
 
-        // Hover/selection highlight: draw a square outline around the cell. A true hex
-        // outline would need Draw.Line; a square is a clear-enough indicator for now.
+        // Hover: static white outline.
         if (_hoverCol >= 0)
         {
             GetCellRect(_hoverCol, _hoverRow, out float hx, out float hy);
             Draw.RectOutline(hx, hy, TILE_W, TILE_H, new Color(255, 255, 255, 180));
         }
+        // Selection: "breathing" highlight via Anim.Pulse — outline grows/shrinks
+        // around the cell center and the alpha pulses in counter-phase for extra pop.
         if (_selCol >= 0)
         {
             GetCellRect(_selCol, _selRow, out float sx, out float sy);
-            Draw.RectOutline(sx, sy, TILE_W, TILE_H, new Color(255, 230, 60, 255));
+            float k     = Anim.Pulse(0.94f, 1.10f, period: 1.2f);
+            float alpha = Anim.Pulse(170f,   255f, period: 1.2f, phase: 0.5f);
+            float w = TILE_W * k, h = TILE_H * k;
+            float cx = sx + TILE_W * 0.5f, cy = sy + TILE_H * 0.5f;
+            Draw.RectOutline(cx - w * 0.5f, cy - h * 0.5f, w, h,
+                new Color(255, 230, 60, (byte)alpha));
+        }
+
+        DrawTextDemo();
+        _gui.Render(Camera, ViewportWidth, ViewportHeight);
+    }
+
+    private void DrawTextDemo()
+    {
+        if (_font == null) return;
+
+        // Screen-space HUD: stays glued to the viewport regardless of pan/zoom.
+        var banner = new TextAnim
+        {
+            WaveAmplitude = 8f, WaveSpeed = 6f,
+            PopAmount = 0.18f, PopSpeed = 7f,
+            Rainbow = true, RainbowSpeed = 4f,
+            Stagger = 0.08f,
+        };
+        TextRenderer.DrawScreen(_font, "BDV HEX STRATEGY",
+            ViewportWidth * 0.5f, 80f, 0.9f, Color.White,
+            Camera, ViewportWidth, ViewportHeight, banner, TextAlign.Center);
+
+        TextRenderer.DrawScreen(_font, "WASD to pan  ·  scroll to zoom  ·  click to select",
+            ViewportWidth * 0.5f, 140f, 0.32f, new Color(220, 220, 230, 255),
+            Camera, ViewportWidth, ViewportHeight, TextAnim.None, TextAlign.Center);
+
+        // World-space label floats above the hovered hex (scales with zoom).
+        if (_hoverCol >= 0)
+        {
+            GetCellRect(_hoverCol, _hoverRow, out float hx, out float hy);
+            TextRenderer.Draw(_font, _tiles[_hoverRow * MAP_W + _hoverCol].ToString(),
+                hx + TILE_W * 0.5f, hy - 8f, 0.6f, new Color(255, 240, 180, 255),
+                TextAnim.Shaky(1.2f), TextAlign.Center);
         }
     }
 
@@ -283,6 +316,108 @@ public sealed class HexStrategyGame : Game, IMessageHandler
     }
 
     private string TileAt(int col, int row) => _tiles[row * MAP_W + col].ToString();
+
+    // -------------------- new Gui library demo --------------------
+
+    private void BuildGui()
+    {
+        var root = new BdvEngine.Gui.Root();
+        if (_font != null) root.WithFont(_font);
+
+        // ── Top-left: world info & seed controls ──
+        var info = new BdvEngine.Gui.Panel(16, 16, 320, 200)
+            .WithBackground(new Color(18, 22, 32, 230))
+            .WithBorder(new Color(95, 115, 160, 255), 2f);
+        info.Add(new BdvEngine.Gui.Label(14, 10, "Bdv Hex Strategy").WithScale(0.46f));
+        info.Add(new BdvEngine.Gui.Label(14, 42, $"{MAP_W}x{MAP_H} hex world").WithScale(0.30f).WithColor(new Color(180, 190, 210, 255)));
+        info.Add(new BdvEngine.Gui.Label(14, 62, "WASD pan · scroll zoom · click selects").WithScale(0.26f).WithColor(new Color(170, 180, 200, 255)));
+        info.Add(new BdvEngine.Gui.Button(14, 90, 110, 28, "Random Seed")
+            .WithFont(_font!, 0.30f)
+            .OnClick(() =>
+            {
+                _seed = new Random().Next(1, 999_999);
+                _seedInput = _seed.ToString();
+                Generate(_seed);
+            })
+            // Behavior-style attachable: button breathes while the cursor is over it.
+            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior()));
+        info.Add(new BdvEngine.Gui.LiveLabel(14, 128, () => $"Seed: {_seed}   Zoom: {Camera.Zoom:F3}x")
+            .WithScale(0.30f).WithColor(new Color(220, 225, 240, 255)));
+        info.Add(new BdvEngine.Gui.LiveLabel(14, 152, () =>
+            _hoverCol < 0 ? "Hover: —"
+                          : $"Hover: ({_hoverCol},{_hoverRow}) {TileAt(_hoverCol, _hoverRow)}{CivLabel(_hoverCol, _hoverRow)}"
+        ).WithScale(0.26f));
+        info.Add(new BdvEngine.Gui.LiveLabel(14, 172, () =>
+            _selCol < 0 ? "Selected: —"
+                        : $"Selected: ({_selCol},{_selRow}) {TileAt(_selCol, _selRow)}{CivLabel(_selCol, _selRow)}"
+        ).WithScale(0.26f));
+        root.Add(info);
+
+        // ── Top-right: filters ──
+        float filterX = ViewportWidth - 230 - 16;
+        var filters = new BdvEngine.Gui.Panel(filterX, 16, 230, 160)
+            .WithBackground(new Color(18, 22, 32, 230))
+            .WithBorder(new Color(95, 115, 160, 255), 2f);
+        filters.Add(new BdvEngine.Gui.Label(14, 10, "Filters").WithScale(0.40f));
+        filters.Add(new BdvEngine.Gui.Button(14, 42, 90, 26, "None")
+            .WithFont(_font!, 0.30f).OnClick(() => _filter = FilterMode.None)
+            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior(0.95f, 1.06f, 0.9f)));
+        filters.Add(new BdvEngine.Gui.Button(110, 42, 105, 26, "Civilization")
+            .WithFont(_font!, 0.26f).OnClick(() => _filter = FilterMode.Civilization)
+            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior(0.95f, 1.06f, 0.9f)));
+        filters.Add(new BdvEngine.Gui.LiveLabel(14, 80, () => $"Active: {_filter}")
+            .WithScale(0.28f).WithColor(new Color(220, 225, 240, 255)));
+        filters.Add(new BdvEngine.Gui.LiveLabel(14, 110, () =>
+        {
+            if (_hoverCol < 0) return "Owner: —";
+            sbyte d = _domMap[_hoverRow * MAP_W + _hoverCol];
+            return d < 0 ? "Owner: unowned" : $"Owner: {NATION_NAMES[d]}";
+        }).WithScale(0.26f));
+        root.Add(filters);
+
+        // ── Bottom-left: tile preview with sheet stepper ──
+        var preview = new BdvEngine.Gui.Panel(20, 240, 280, 280)
+            .WithBackground(new Color(18, 22, 32, 230))
+            .WithBorder(new Color(95, 115, 160, 255), 2f);
+        preview.Add(new BdvEngine.Gui.Label(14, 12, "Tile Preview").WithScale(0.42f).WithColor(new Color(220, 225, 240, 255)));
+        _previewImage = preview.Add(new BdvEngine.Gui.Image(14, 50, 130, 132, _sheet)
+            .WithSubRect(0, 0, SHEET_COLS, SHEET_ROWS));
+        _previewLabel = preview.Add(new BdvEngine.Gui.Label(160, 60, "Grass")
+            .WithScale(0.36f).WithColor(new Color(255, 240, 200, 255))
+            .WithAnim(new TextAnim { WaveAmplitude = 2f, WaveSpeed = 4f, Stagger = 0.12f }));
+        preview.Add(new BdvEngine.Gui.Arrow(160, 100, 28, BdvEngine.Gui.ArrowDirection.Left)
+            .OnClick(() => StepPreview(-1))
+            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior(0.92f, 1.12f, 0.7f)));
+        preview.Add(new BdvEngine.Gui.Arrow(196, 100, 28, BdvEngine.Gui.ArrowDirection.Right)
+            .OnClick(() => StepPreview(+1))
+            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior(0.92f, 1.12f, 0.7f)));
+        preview.Add(new BdvEngine.Gui.Label(14, 195, "Camera Speed").WithScale(0.30f).WithColor(new Color(180, 190, 210, 255)));
+        preview.Add(new BdvEngine.Gui.Slider(14, 220, 250, 14, 100f, 2000f, _camSpeed).OnChange(v => _camSpeed = v));
+        root.Add(preview);
+
+        _gui = root;
+        UpdatePreview();
+    }
+
+    private void StepPreview(int delta)
+    {
+        // Step through the spritesheet, skipping placeholder cells.
+        int total = SHEET_COLS * SHEET_ROWS;
+        for (int i = 0; i < total; i++)
+        {
+            _previewTile = (_previewTile + delta + total) % total;
+            if (Enum.IsDefined(typeof(Tile), (byte)_previewTile)) break;
+        }
+        UpdatePreview();
+    }
+
+    private void UpdatePreview()
+    {
+        int col = _previewTile % SHEET_COLS;
+        int row = _previewTile / SHEET_COLS;
+        _previewImage.WithSubRect(col, row, SHEET_COLS, SHEET_ROWS);
+        _previewLabel.Text = ((Tile)_previewTile).ToString();
+    }
 
     private string CivLabel(int col, int row)
     {

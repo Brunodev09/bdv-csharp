@@ -14,13 +14,22 @@ src/
     Engine.cs                        # 2D engine entry point
     Engine3D.cs                      # 3D engine entry point
     Game.cs / Game3D                 # base classes consumers extend
-    Graphics/                        # SpriteBatcher, TileMap, Sprite, AnimatedSprite, Material, Texture
-    Gl/                              # GL helpers, Shader, GLStats, default shaders
+    Time.cs                          # global Time.Total / Time.Delta clock
+    Graphics/                        # SpriteBatcher (Ground/Object/UIBack/UI), TileMap, Sprite,
+                                     #   AnimatedSprite, Material, Texture (UploadRgba/CreateBlank)
+    Gl/                              # GL helpers, Shader, GLStats, Gfx (FramebufferW/H, WindowW/H)
     World/                           # Scene, SimObject, Transform
     Components/                      # Sprite/AnimatedSprite/Collision/Camera components
-    Behaviors/                       # RigidBody, RayCast, Stateful animation, KeyboardMovement, Wander, Rotation
-    Input/                           # InputManager (Silk.NET-backed)
-    UI/                              # ImGui-flavored UI helpers
+    Behaviors/                       # RigidBody, RayCast, Stateful animation, KeyboardMovement,
+                                     #   Wander, Rotation, Pulse
+    Animation/                       # Anim.Pulse / PingPong / Ramp / SinWave / Ease.*
+    Input/                           # InputManager (Silk-wrapped); engine-owned Key enum
+    UI/                              # ImGui-flavored static helpers (legacy; fallback only)
+    Gui/                             # Element, Root, Context, Panel, Label, LiveLabel, Image,
+                                     #   Button, Slider, Arrow, Checkbox, Scissor, IElementBehavior,
+                                     #   PulseOnHoverBehavior
+    Text/                            # Font (TTF baking via stb_truetype), FontManager,
+                                     #   TextRenderer (Draw + DrawScreen), TextAnim
     Audio/                           # AudioManager, AudioHandle, WavDecoder (OpenAL)
     Save/                            # SaveManager (filesystem JSON)
     Com/                             # Message, MessageBus
@@ -29,10 +38,11 @@ src/
 
   Examples/                          # standalone consumer programs
     MyGame/                          # animated duck + particles + custom shader + parent/child rotation
-    My3DGame/                        # orbit cubes + Phong lighting
+    My3DGame/                        # orbit cubes + Phong lighting (still uses ImGui — no 2D overlay yet)
     CollisionGame/                   # rigid body collisions + raycast
     StressGame/                      # 5000 particles + sliders
     TerrainGame/                     # 1024×1024 procedural world (the big one)
+    HexStrategyGame/                 # 128×128 hex world + biomes + civs + Gui demo
 ```
 
 ---
@@ -42,11 +52,13 @@ src/
 - **Examples are library consumers**, not CLI subcommands. Each example is its
   own `csproj` with `Program.cs` that constructs an `Engine`/`Engine3D` and
   passes a `Game`/`Game3D` subclass.
-- **No `Silk.NET.OpenGL` outside the engine.** Examples must never import GL
-  types or call `Gfx.Gl`. All GPU plumbing lives behind engine APIs (Sprite,
-  TileMap, SpriteBatcher, Draw, etc.). Rendering surfaces for example code:
-  `Sprite`, `AnimatedSprite`, `TileMap`, `SpriteBatcher.DrawTexture`,
-  `SpriteBatcher.DrawTextureUV`, `Draw.RectOutline` etc.
+- **No `Silk.NET.*` outside the engine.** Examples must never import any Silk
+  namespace. The engine wraps what it surfaces — `BdvEngine.Key` mirrors Silk's
+  `Key` (same numeric values for identity-cast at the boundary), `MouseContext`
+  wraps mouse state, `InputManager` wraps the input loop. All GPU plumbing lives
+  behind engine APIs (Sprite, TileMap, SpriteBatcher, Draw, TextRenderer, Gui).
+- **ImGui is engine-internal, kept as fallback.** The stats overlay and 3D-only
+  examples still use it. Examples on the 2D engine use `BdvEngine.Gui`.
 - **Don't pause to ask permission once direction is clear.** Plow through the
   whole task; mid-task confirmations are noise.
 
@@ -96,13 +108,14 @@ Phong-style `LitShader`.
 
 ### Sprite-based rendering — `SpriteBatcher`
 
-Single static class with three layers:
+Single static class with **four** layers:
 
 | Layer | Order | Behavior |
 |---|---|---|
 | `Ground` | 1st | Per-texture batched, insertion order. One draw per (shader × texture). |
 | `Object` | 2nd | Per-quad entries with `sortY`; sorted by Y on flush, run-length batched by texture for stable depth (RimWorld-style feet-on-ground sort). |
-| `UI` | 3rd | Per-texture batched, insertion order. |
+| `UIBack` | 3rd | Per-texture batched, insertion order. Reserved for UI backgrounds (panels, button fills, slider tracks) so they sit *behind* `UI`-layer text/images but in front of game objects. |
+| `UI`     | 4th | Per-texture batched, insertion order. Text/images/icons that should sit on top of UI backgrounds. |
 
 API:
 
@@ -110,6 +123,7 @@ API:
 SpriteBatcher.Push(verts, material, worldMatrix, layer, sortY)
 SpriteBatcher.DrawTexture(material, srcCol, srcRow, gridCols, gridRows, x, y, w, h, tint, layer, sortY)
 SpriteBatcher.DrawTextureUV(material, u0, v0, u1, v1, x, y, w, h, tint, layer, sortY)
+SpriteBatcher.DrawSolid(x, y, w, h, color, layer, sortY)   // 1×1 white texture; lazy-init
 ```
 
 - **Indexed quads.** 4 verts + 6 indices per quad (was 6 verts). Saves ~33%

@@ -158,17 +158,29 @@ public sealed class MyGame : Game
         });
     }
 
+    private Font _font = null!;
+    private BdvEngine.Gui.Root _gui = null!;
+
     private void BuildUI()
     {
-        var panel = UI.Panel(UIAnchor.TopLeft);
-        UI.Heading(panel, "BdvEngine");
-        UI.Text(panel, "Arrow keys to move the duck");
-        UI.Spacer(panel);
-        UI.TextLive(panel, () => $"Score: {_score}");
-        UI.Button(panel, "+10 Score", () => _score += 10);
-        UI.Spacer(panel);
-        UI.Slider(panel, "Speed (px/s)", 60f, 1200f, 150f, v => _move.Speed = v);
-        UI.Checkbox(panel, "Show shapes", true, v => _drawShapes = v);
+        _font = Font.LoadDefault();
+        _gui = new BdvEngine.Gui.Root().WithFont(_font);
+
+        var panel = new BdvEngine.Gui.Panel(16, 16, 280, 240)
+            .WithBackground(new Color(18, 22, 32, 230))
+            .WithBorder(new Color(95, 115, 160, 255), 2f);
+        panel.Add(new BdvEngine.Gui.Label(14, 10, "BdvEngine").WithScale(0.46f));
+        panel.Add(new BdvEngine.Gui.Label(14, 42, "Arrow keys to move the duck")
+            .WithScale(0.28f).WithColor(new Color(180, 190, 210, 255)));
+        panel.Add(new BdvEngine.Gui.LiveLabel(14, 72, () => $"Score: {_score}")
+            .WithScale(0.32f).WithColor(new Color(255, 240, 180, 255)));
+        panel.Add(new BdvEngine.Gui.Button(14, 100, 110, 28, "+10 Score")
+            .WithFont(_font, 0.28f).OnClick(() => _score += 10));
+
+        panel.Add(new BdvEngine.Gui.Label(14, 138, "Speed (px/s)").WithScale(0.26f).WithColor(new Color(180, 190, 210, 255)));
+        panel.Add(new BdvEngine.Gui.Slider(14, 158, 244, 14, 60f, 1200f, 150f).OnChange(v => _move.Speed = v));
+        panel.Add(new BdvEngine.Gui.Checkbox(14, 188, 240, 18, "Show shapes", true).OnChange(v => _drawShapes = v));
+        _gui.Add(panel);
     }
 
     public override void Update(double deltaTime)
@@ -189,6 +201,7 @@ public sealed class MyGame : Game
 
         _fireEmitter.Update(deltaTime);
         _sparkEmitter.Update(deltaTime);
+        _gui.Update(Camera, ViewportWidth, ViewportHeight);
     }
 
     public override void Render(Shader shader)
@@ -211,6 +224,8 @@ public sealed class MyGame : Game
         _sparkEmitter.Render();
 
         if (++_frame == 120) Screenshot.PendingPath = "/tmp/mygame.ppm";
+
+        _gui.Render(Camera, ViewportWidth, ViewportHeight);
     }
 
     private int _frame;

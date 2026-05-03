@@ -14,6 +14,7 @@ public static class Registrations
         ComponentManager.RegisterBuilder(new ColliderComponentBuilder());
         BehaviorManager.RegisterBuilder(new KeyboardMovementBehaviorBuilder());
         BehaviorManager.RegisterBuilder(new RotationBehaviorBuilder());
+        BehaviorManager.RegisterBuilder(new PulseBehaviorBuilder());
         BehaviorManager.RegisterBuilder(new RigidBodyBehaviorBuilder());
         BehaviorManager.RegisterBuilder(new RayCastBehaviorBuilder());
         BehaviorManager.RegisterBuilder(new StatefulAnimationBehaviorBuilder());

@@ -83,31 +83,30 @@ public sealed class TerrainGame : Game, IMessageHandler
         }
     }
 
+    private Font _font = null!;
+    private BdvEngine.Gui.Root _gui = null!;
+
     private void BuildUI()
     {
-        var panel = UI.Panel(UIAnchor.TopLeft);
-        UI.Heading(panel, "Bdv World");
-        UI.Text(panel, $"{MAP_SIZE}x{MAP_SIZE} — WASD + scroll");
-        UI.Spacer(panel);
+        _font = Font.LoadDefault();
+        _gui = new BdvEngine.Gui.Root().WithFont(_font);
 
-        UI.Input(panel, "Seed", _seedInput, v => _seedInput = v);
-        UI.Button(panel, "Go", () =>
-        {
-            if (int.TryParse(_seedInput, out int v) && v > 0)
+        var panel = new BdvEngine.Gui.Panel(16, 16, 320, 240)
+            .WithBackground(new Color(18, 22, 32, 230))
+            .WithBorder(new Color(95, 115, 160, 255), 2f);
+        panel.Add(new BdvEngine.Gui.Label(14, 10, "Bdv World").WithScale(0.46f));
+        panel.Add(new BdvEngine.Gui.Label(14, 42, $"{MAP_SIZE}x{MAP_SIZE} — WASD + scroll").WithScale(0.30f).WithColor(new Color(180, 190, 210, 255)));
+        panel.Add(new BdvEngine.Gui.Button(14, 76, 110, 28, "Random Seed")
+            .WithFont(_font, 0.30f)
+            .OnClick(() =>
             {
-                _seed = v;
-                GenerateWorld(v);
-            }
-        });
-        UI.Button(panel, "Random", () =>
-        {
-            _seed = new Random().Next(1, 999999);
-            _seedInput = _seed.ToString();
-            GenerateWorld(_seed);
-        });
-        UI.Spacer(panel);
-        UI.TextLive(panel, () => $"Zoom: {Camera.Zoom:F3}x  Seed: {_seed}");
-        UI.TextLive(panel, () =>
+                _seed = new Random().Next(1, 999_999);
+                _seedInput = _seed.ToString();
+                GenerateWorld(_seed);
+            }));
+        panel.Add(new BdvEngine.Gui.LiveLabel(14, 116, () => $"Seed: {_seed}   Zoom: {Camera.Zoom:F3}x")
+            .WithScale(0.30f).WithColor(new Color(220, 225, 240, 255)));
+        panel.Add(new BdvEngine.Gui.LiveLabel(14, 144, () =>
         {
             if (_hoverTileX < 0) return "(move mouse over map)";
             int idx = _tileMap.GetTile(_hoverTileX, _hoverTileY);
@@ -116,7 +115,8 @@ public sealed class TerrainGame : Game, IMessageHandler
             string bld = _buildingTiles.Contains(_hoverTileY * MAP_SIZE + _hoverTileX) ? " [Building]" : "";
             string ovl = oi >= 0 ? $" + {TileName(oi)}" : "";
             return $"({_hoverTileX},{_hoverTileY}) {BiomeNames[b]} | {TileName(idx)}{ovl}{bld}";
-        });
+        }).WithScale(0.26f));
+        _gui.Add(panel);
     }
 
     private static string TileName(int i)
@@ -477,6 +477,7 @@ public sealed class TerrainGame : Game, IMessageHandler
         Camera.Y = Math.Clamp(Camera.Y, 0, ws);
 
         _humanScene.Update(deltaTime);
+        _gui.Update(Camera, ViewportWidth, ViewportHeight);
 
         var mouse = InputManager.GetMousePosition();
         var world = Camera.ScreenToWorld(mouse.X, mouse.Y, ViewportWidth, ViewportHeight);
@@ -502,6 +503,8 @@ public sealed class TerrainGame : Game, IMessageHandler
             Draw.RectOutline(_hoverTileX * ts, _hoverTileY * ts, ts, ts, Color.White);
 
         if (++_frame == 240) Screenshot.PendingPath = "/tmp/terrain.ppm";
+
+        _gui.Render(Camera, ViewportWidth, ViewportHeight);
     }
 
     private int _frame;
