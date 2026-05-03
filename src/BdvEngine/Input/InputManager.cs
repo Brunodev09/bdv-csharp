@@ -1,5 +1,6 @@
 using System.Numerics;
 using Silk.NET.Input;
+using SilkKey = Silk.NET.Input.Key;
 
 namespace BdvEngine;
 
@@ -20,7 +21,7 @@ public sealed class MouseContext
 public static class InputManager
 {
     private static IInputContext? _input;
-    private static readonly HashSet<Key> _keysDown = new();
+    private static readonly HashSet<Key> _keysDown = new(); // BdvEngine.Key
 
     private static float _mouseX, _mouseY;
     private static bool _leftDown, _rightDown;
@@ -32,8 +33,8 @@ public static class InputManager
 
         foreach (var kb in input.Keyboards)
         {
-            kb.KeyDown += (_, key, _) => _keysDown.Add(key);
-            kb.KeyUp += (_, key, _) => _keysDown.Remove(key);
+            kb.KeyDown += (_, key, _) => _keysDown.Add((Key)key);
+            kb.KeyUp += (_, key, _) => _keysDown.Remove((Key)key);
         }
 
         foreach (var mouse in input.Mice)

@@ -1,6 +1,5 @@
 using System.Numerics;
 using BdvEngine;
-using Silk.NET.Input;
 
 namespace TerrainGameApp;
 
