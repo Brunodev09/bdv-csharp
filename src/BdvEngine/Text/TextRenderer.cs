@@ -129,6 +129,97 @@ public static class TextRenderer
         }
     }
 
+    /// <summary>Greedy word-wrap to a max pixel width (unscaled font units * scale).
+    /// Splits on spaces, preserves explicit \n. Returns the lines in order.</summary>
+    public static IEnumerable<string> Wrap(Font font, string text, float maxWidth, float scale)
+    {
+        foreach (var paragraph in (text ?? "").Split('\n'))
+        {
+            var words = paragraph.Split(' ');
+            string current = "";
+            foreach (var word in words)
+            {
+                string test = current.Length == 0 ? word : current + " " + word;
+                if (font.Measure(test) * scale > maxWidth && current.Length > 0)
+                {
+                    yield return current;
+                    current = word;
+                }
+                else current = test;
+            }
+            yield return current;
+        }
+    }
+
+    /// <summary>Draw text in screen pixels with simple inline color tags:
+    ///   <c>&lt;color=#rrggbb&gt;…&lt;/color&gt;</c>
+    /// Nesting is supported via a color stack. Other tags are passed through verbatim.</summary>
+    public static void DrawScreenRich(Font font, string text, float screenX, float screenY,
+        float pixelScale, Color baseColor,
+        Camera2D camera, int viewportW, int viewportH)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        float invZoom = 1f / camera.Zoom;
+        var world = camera.ScreenToWorld(screenX, screenY, viewportW, viewportH);
+        DrawWorldRich(font, text, world.X, world.Y, pixelScale * invZoom, baseColor);
+    }
+
+    private static void DrawWorldRich(Font font, string text, float x, float y, float scale, Color baseColor)
+    {
+        var stack = new Stack<Color>();
+        stack.Push(baseColor);
+        float cursor = 0f;
+        int i = 0;
+        while (i < text.Length)
+        {
+            char c = text[i];
+            if (c == '<')
+            {
+                int end = text.IndexOf('>', i + 1);
+                if (end > i)
+                {
+                    string tag = text.Substring(i + 1, end - i - 1);
+                    if (tag.StartsWith("color=#") && tag.Length >= 13)
+                    {
+                        if (TryParseHex(tag.AsSpan(7), out var col))
+                        {
+                            stack.Push(new Color(col.R, col.G, col.B, baseColor.A));
+                            i = end + 1; continue;
+                        }
+                    }
+                    else if (tag == "/color")
+                    {
+                        if (stack.Count > 1) stack.Pop();
+                        i = end + 1; continue;
+                    }
+                }
+            }
+            if (!font.TryGetQuad(c, ref cursor, 0f,
+                out float lx0, out float ly0, out float lx1, out float ly1,
+                out float u0, out float v0, out float u1, out float v1))
+            { i++; continue; }
+            if (lx1 > lx0 && ly1 > ly0)
+            {
+                float gw = (lx1 - lx0) * scale, gh = (ly1 - ly0) * scale;
+                float cx = x + (lx0 + (lx1 - lx0) * 0.5f) * scale;
+                float cy = y + (ly0 + (ly1 - ly0) * 0.5f) * scale;
+                SpriteBatcher.DrawTextureUV(font.Material, u0, v0, u1, v1,
+                    cx - gw * 0.5f, cy - gh * 0.5f, gw, gh, stack.Peek(), SpriteLayer.UI);
+            }
+            i++;
+        }
+    }
+
+    private static bool TryParseHex(ReadOnlySpan<char> hex, out (byte R, byte G, byte B) c)
+    {
+        c = default;
+        if (hex.Length < 6) return false;
+        if (!byte.TryParse(hex[..2], System.Globalization.NumberStyles.HexNumber, null, out var r)) return false;
+        if (!byte.TryParse(hex.Slice(2, 2), System.Globalization.NumberStyles.HexNumber, null, out var g)) return false;
+        if (!byte.TryParse(hex.Slice(4, 2), System.Globalization.NumberStyles.HexNumber, null, out var b)) return false;
+        c = (r, g, b); return true;
+    }
+
     private static float Hash01(int x)
     {
         // xorshift on a per-call basis; deterministic for same x.

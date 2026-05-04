@@ -28,26 +28,21 @@ public sealed class Checkbox : Element
     public Checkbox WithFont(Font f, float scale = 0.32f) { Font = f; TextScale = scale; return this; }
     public Checkbox WithTextColor(Color c) { TextColor = c; return this; }
 
-    public override void Update(Context ctx)
+    public override void OnPointerDown (PointerEvent e) { if (Enabled) _pressed = true; }
+    public override void OnPointerUp   (PointerEvent e) { _pressed = false; }
+    public override void OnPointerClick(PointerEvent e)
     {
-        if (!Visible || !Enabled) { _pressed = false; base.Update(ctx); return; }
-        bool over = ctx.Hovered == this;
-        if (over && ctx.MouseClicked) _pressed = true;
-        if (_pressed && ctx.MouseReleased)
-        {
-            if (over) { Value = !Value; OnChangeCallback?.Invoke(Value); }
-            _pressed = false;
-        }
-        if (!ctx.MouseDown) _pressed = false;
-        base.Update(ctx);
+        if (!Enabled) return;
+        Value = !Value;
+        OnChangeCallback?.Invoke(Value);
     }
 
     public override void Render(Context ctx)
     {
         if (!Visible) return;
-        var (ax, ay) = AbsolutePosition();
+        var (ax, ay, aw, ah) = AbsoluteRect();
         float ws = ctx.WorldScale;
-        float box = Height; // square box on the left, height = row height
+        float box = ah;
 
         var w0 = ctx.ToWorld(ax, ay);
         Color bg = _pressed ? BoxPressed : (ctx.Hovered == this ? BoxHover : BoxIdle);
@@ -65,7 +60,7 @@ public sealed class Checkbox : Element
         var font = Font ?? ctx.DefaultFont;
         if (font != null)
         {
-            float baseline = ay + Height * 0.5f + font.Ascent * TextScale * 0.32f;
+            float baseline = ay + ah * 0.5f + font.Ascent * TextScale * 0.32f;
             TextRenderer.DrawScreen(font, LabelText, ax + box + 8f, baseline,
                 TextScale, TextColor, ctx.Camera, ctx.ViewportW, ctx.ViewportH,
                 default, TextAlign.Left);

@@ -22,6 +22,8 @@ public static class InputManager
 {
     private static IInputContext? _input;
     private static readonly HashSet<Key> _keysDown = new(); // BdvEngine.Key
+    private static readonly HashSet<Key> _pressedThisFrame = new();
+    private static readonly System.Text.StringBuilder _typedChars = new();
 
     private static float _mouseX, _mouseY;
     private static bool _leftDown, _rightDown;
@@ -33,8 +35,9 @@ public static class InputManager
 
         foreach (var kb in input.Keyboards)
         {
-            kb.KeyDown += (_, key, _) => _keysDown.Add((Key)key);
+            kb.KeyDown += (_, key, _) => { var k = (Key)key; if (_keysDown.Add(k)) _pressedThisFrame.Add(k); };
             kb.KeyUp += (_, key, _) => _keysDown.Remove((Key)key);
+            kb.KeyChar += (_, c) => _typedChars.Append(c);
         }
 
         foreach (var mouse in input.Mice)
@@ -59,12 +62,32 @@ public static class InputManager
     }
 
     public static bool IsKeyDown(Key key) => _keysDown.Contains(key);
+    /// <summary>True only on the frame the key transitioned from up to down. Cleared
+    /// at the end of each engine update via <see cref="EndFrame"/>.</summary>
+    public static bool WasKeyPressed(Key key) => _pressedThisFrame.Contains(key);
+
+    /// <summary>Drain the typed-character buffer (for text input fields). Returns the
+    /// string of printable chars typed since the last call, then clears it.</summary>
+    public static string ConsumeTypedString()
+    {
+        if (_typedChars.Length == 0) return "";
+        var s = _typedChars.ToString();
+        _typedChars.Clear();
+        return s;
+    }
 
     public static float ConsumeWheelDelta()
     {
         var d = _wheelDelta;
         _wheelDelta = 0f;
         return d;
+    }
+
+    /// <summary>Called by the engine at the end of each Update tick. Clears edge state
+    /// so WasKeyPressed only fires on the actual transition frame.</summary>
+    public static void EndFrame()
+    {
+        _pressedThisFrame.Clear();
     }
 
     public static Vector2 GetMousePosition() => new(_mouseX, _mouseY);

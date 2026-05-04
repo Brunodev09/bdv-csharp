@@ -76,6 +76,48 @@ public static class SpriteBatcher
         SpriteLayer layer = SpriteLayer.UI, float sortY = 0f)
         => DrawTextureUV(GetSolidMaterial(), 0f, 0f, 1f, 1f, x, y, width, height, color, layer, sortY);
 
+    /// <summary>Pointy-top hex mask texture — opaque white inside the hex silhouette,
+    /// transparent outside. Lets us draw solid-color hex fills through the batcher
+    /// instead of via Draw.Triangle (which flushes after SpriteBatcher and would
+    /// otherwise sit on top of UI panels).</summary>
+    private static Material? _hexMaskMat;
+    private static Material GetHexMaskMaterial()
+    {
+        if (_hexMaskMat != null) return _hexMaskMat;
+        const int N = 256;
+        var pixels = new byte[N * N * 4];
+        float r = N / 2f;
+        float sqrt3_2 = MathF.Sqrt(3f) / 2f;
+        for (int y = 0; y < N; y++)
+        {
+            for (int x = 0; x < N; x++)
+            {
+                float dx = x - r + 0.5f, dy = y - r + 0.5f;
+                bool inside = MathF.Abs(dy) <= r
+                           && MathF.Abs(dx) <= sqrt3_2 * r
+                           && MathF.Abs(dy) + MathF.Abs(dx) / sqrt3_2 <= r;
+                int o = (y * N + x) * 4;
+                pixels[o] = pixels[o + 1] = pixels[o + 2] = 255;
+                pixels[o + 3] = (byte)(inside ? 255 : 0);
+            }
+        }
+        const string texName = "__sprite_hex_mask__";
+        var tex = Texture.CreateBlank(texName, N, N);
+        tex.UploadRgba(N, N, pixels);
+        TextureManager.Register(texName, tex);
+        _hexMaskMat = new Material("__sprite_hex_mat__", texName, Color.White);
+        MaterialManager.Register(_hexMaskMat);
+        return _hexMaskMat;
+    }
+
+    /// <summary>Push a solid-color pointy-top hex centered at (cx, cy) with width/height
+    /// w × h. Goes through the batcher (so layer ordering applies) — use Ground for
+    /// game-world overlays so UI panels still draw on top.</summary>
+    public static void DrawHexPointyTop(float cx, float cy, float w, float h, Color color,
+        SpriteLayer layer = SpriteLayer.Ground, float sortY = 0f)
+        => DrawTextureUV(GetHexMaskMaterial(), 0f, 0f, 1f, 1f,
+            cx - w * 0.5f, cy - h * 0.5f, w, h, color, layer, sortY);
+
     private static unsafe void EnsureInit()
     {
         if (_initialized) return;

@@ -1,0 +1,9 @@
+{
+  "inputDir": "input",
+  "outputPath": "output.png",
+  "metadataPath": "output.json",
+  "cellWidth": 195,
+  "cellHeight": 203,
+  "cols": 6,
+  "mode": "hex"
+}

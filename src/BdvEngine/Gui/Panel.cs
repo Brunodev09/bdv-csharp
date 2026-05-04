@@ -5,7 +5,7 @@ namespace BdvEngine.Gui;
 /// widgets, add backdrops, draw card-style frames. Pickable by default so it absorbs
 /// clicks that would otherwise fall through to whatever is behind the UI.
 /// </summary>
-public sealed class Panel : Element
+public class Panel : Element
 {
     public Color? Background;
     public Color? Border;
@@ -27,14 +27,15 @@ public sealed class Panel : Element
         var (rx, ry, rw, rh) = RenderRect();
         var w = ctx.ToWorld(rx, ry);
         float ws = ctx.WorldScale;
-        if (Background.HasValue) SpriteBatcher.DrawSolid(w.X, w.Y, rw * ws, rh * ws, Background.Value, SpriteLayer.UIBack);
+        float a = EffectiveAlpha;
+        if (Background.HasValue) SpriteBatcher.DrawSolid(w.X, w.Y, rw * ws, rh * ws, GuiHelpers.Mul(Background.Value, a), SpriteLayer.UIBack);
 
         if (ClipChildren)
         {
-            // Clip to raw bounds (not RenderScale'd) — behaviors that scale a panel
-            // shouldn't change which children are visible, only the visual chrome.
-            var (ax, ay) = AbsolutePosition();
-            Scissor.Push(ax, ay, Width, Height);
+            // Clip to absolute (anchor-resolved) rect, not RenderScale'd — behaviors
+            // that pulse a panel shouldn't change which children are visible.
+            var (ax, ay, aw, ah) = AbsoluteRect();
+            Scissor.Push(ax, ay, aw, ah);
             base.Render(ctx);
             Scissor.Pop();
         }
@@ -43,6 +44,6 @@ public sealed class Panel : Element
             base.Render(ctx);
         }
 
-        if (Border.HasValue) Draw.RectOutline(w.X, w.Y, rw * ws, rh * ws, Border.Value);
+        if (Border.HasValue) Draw.RectOutline(w.X, w.Y, rw * ws, rh * ws, GuiHelpers.Mul(Border.Value, a));
     }
 }

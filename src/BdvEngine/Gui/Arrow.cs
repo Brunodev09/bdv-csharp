@@ -27,36 +27,26 @@ public sealed class Arrow : Element
     { BgIdle = idle; BgHover = hover; BgPressed = pressed; return this; }
     public Arrow WithGlyphColor(Color c) { GlyphColor = c; return this; }
 
-    public override void Update(Context ctx)
-    {
-        if (!Visible || !Enabled) { _pressed = false; base.Update(ctx); return; }
-        bool over = ctx.Hovered == this;
-        if (over && ctx.MouseClicked) _pressed = true;
-        if (_pressed && ctx.MouseReleased)
-        {
-            if (over) OnClickCallback?.Invoke();
-            _pressed = false;
-        }
-        if (!ctx.MouseDown) _pressed = false;
-        base.Update(ctx);
-    }
+    public override void OnPointerDown (PointerEvent e) { if (Enabled) _pressed = true; }
+    public override void OnPointerUp   (PointerEvent e) { _pressed = false; }
+    public override void OnPointerClick(PointerEvent e) { if (Enabled) OnClickCallback?.Invoke(); }
 
     public override void Render(Context ctx)
     {
         if (!Visible) return;
-        var (ax, ay) = AbsolutePosition();
+        var (rx, ry, rw, rh) = RenderRect();
         Color bg = !Enabled ? BgDisabled
                   : _pressed ? BgPressed
                   : ctx.Hovered == this ? BgHover
                   : BgIdle;
         float ws = ctx.WorldScale;
-        var bgW = ctx.ToWorld(ax, ay);
-        SpriteBatcher.DrawSolid(bgW.X, bgW.Y, Width * ws, Height * ws, bg, SpriteLayer.UIBack);
+        var bgW = ctx.ToWorld(rx, ry);
+        SpriteBatcher.DrawSolid(bgW.X, bgW.Y, rw * ws, rh * ws, bg, SpriteLayer.UIBack);
 
         // Inset triangle by ~25% of the rect on each side, then convert to world coords.
-        float pad = Width * 0.25f;
-        float l = ax + pad, r = ax + Width - pad;
-        float t = ay + pad, b = ay + Height - pad;
+        float pad = MathF.Min(rw, rh) * 0.25f;
+        float l = rx + pad, r = rx + rw - pad;
+        float t = ry + pad, b = ry + rh - pad;
         float cx = (l + r) * 0.5f, cy = (t + b) * 0.5f;
         var wL  = ctx.ToWorld(l,  cy); var wR  = ctx.ToWorld(r,  cy);
         var wT  = ctx.ToWorld(cx, t);  var wB  = ctx.ToWorld(cx, b);

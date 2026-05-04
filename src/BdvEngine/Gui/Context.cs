@@ -27,10 +27,13 @@ public sealed class Context
     /// <summary>Element that has captured input (e.g., a slider being dragged).</summary>
     public Element? Capturing;
 
-    /// <summary>1 screen pixel = WorldScale world units. Equals 1 / camera.Zoom.</summary>
-    public float WorldScale => 1f / Camera.Zoom;
+    /// <summary>UI canvas scale (set by Root). Multiplies logical coords to actual pixels.</summary>
+    public float UIScale = 1f;
 
-    /// <summary>Convert a screen pixel position to a world-space position.</summary>
+    /// <summary>1 logical UI pixel = WorldScale world units. Accounts for camera zoom + canvas scale.</summary>
+    public float WorldScale => UIScale / Camera.Zoom;
+
+    /// <summary>Convert a logical-UI-pixel position to a world-space position.</summary>
     public System.Numerics.Vector2 ToWorld(float screenX, float screenY)
-        => Camera.ScreenToWorld(screenX, screenY, ViewportW, ViewportH);
+        => Camera.ScreenToWorld(screenX * UIScale, screenY * UIScale, ViewportW, ViewportH);
 }

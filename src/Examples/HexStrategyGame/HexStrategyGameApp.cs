@@ -30,7 +30,7 @@ public sealed class HexStrategyGame : Game, IMessageHandler
     // width, leaving horizontal padding. Tiling steps must use the actual hex dimensions
     // (not the cell) to tessellate without gaps.
     private const float TILE_W = 120f;
-    private const float TILE_H = TILE_W * 203.2f / 195f;
+    private const float TILE_H = TILE_W * 203f / 195f;
     private static readonly float HEX_H = TILE_H;                  // hex point-to-point spans cell height
     private static readonly float HEX_W = HEX_H * 0.8660254f;      // sqrt(3)/2 — pointy-top hex width
     private static readonly float COL_STEP = HEX_W;
@@ -99,7 +99,7 @@ public sealed class HexStrategyGame : Game, IMessageHandler
 
     public override void Init()
     {
-        _sheet = new Material("hex_sheet", "hex_tileset.png", Color.White);
+        _sheet = new Material("hex_sheet", "output.png", Color.White);
         MaterialManager.Register(_sheet);
 
         // Try a project-local font first, then fall back to a system font so the demo
@@ -150,6 +150,23 @@ public sealed class HexStrategyGame : Game, IMessageHandler
 
     // BuildUI is now empty — all panels live under _gui (built in BuildGui).
     private void BuildUI() { }
+
+    // Tiny helpers so VerticalLayout demos stay readable — auto-set Width = container's
+    // inner width via Stretch alignment isn't used here so children keep explicit Height.
+    private static BdvEngine.Gui.Label Label(BdvEngine.Gui.Element parent, string text, float scale, Color color, float h)
+    {
+        var l = parent.Add(new BdvEngine.Gui.Label(0, 0, text));
+        l.WithScale(scale).WithColor(color);
+        l.Width = 0; l.Height = h;
+        return l;
+    }
+    private static BdvEngine.Gui.LiveLabel LiveLabel(BdvEngine.Gui.Element parent, Func<string> p, float scale, Color color, float h)
+    {
+        var l = parent.Add(new BdvEngine.Gui.LiveLabel(0, 0, p));
+        l.WithScale(scale).WithColor(color);
+        l.Width = 0; l.Height = h;
+        return l;
+    }
 
     public override void Update(double deltaTime)
     {
@@ -310,26 +327,11 @@ public sealed class HexStrategyGame : Game, IMessageHandler
         => (col * COL_STEP + (row & 1) * ODD_ROW_X + HEX_W * 0.5f,
             row * ROW_STEP + HEX_H * 0.5f);
 
-    // Filled pointy-top hex via 6-triangle fan from the center. Renders through Draw,
-    // which flushes after the SpriteBatcher so the fill fully covers the texture.
+    // Filled pointy-top hex through SpriteBatcher's hex-mask material on the Ground
+    // layer — Ground flushes before UIBack/UI, so faction-colored hexes sit on top of
+    // the world tiles but BELOW any Gui panel/label/image.
     private static void DrawHex(float cx, float cy, Color color)
-    {
-        float hw = HEX_W * 0.5f;
-        float hh = HEX_H * 0.5f;
-        float qh = HEX_H * 0.25f;
-        float topX = cx,      topY = cy - hh;
-        float trX  = cx + hw, trY  = cy - qh;
-        float brX  = cx + hw, brY  = cy + qh;
-        float botX = cx,      botY = cy + hh;
-        float blX  = cx - hw, blY  = cy + qh;
-        float tlX  = cx - hw, tlY  = cy - qh;
-        Draw.Triangle(cx, cy, topX, topY, trX, trY, color);
-        Draw.Triangle(cx, cy, trX,  trY,  brX, brY, color);
-        Draw.Triangle(cx, cy, brX,  brY,  botX, botY, color);
-        Draw.Triangle(cx, cy, botX, botY, blX, blY, color);
-        Draw.Triangle(cx, cy, blX,  blY,  tlX, tlY, color);
-        Draw.Triangle(cx, cy, tlX,  tlY,  topX, topY, color);
-    }
+        => SpriteBatcher.DrawHexPointyTop(cx, cy, HEX_W, HEX_H, color, SpriteLayer.Ground);
 
     private string TileAt(int col, int row) => _tiles[row * MAP_W + col].ToString();
 
@@ -340,55 +342,88 @@ public sealed class HexStrategyGame : Game, IMessageHandler
         var root = new BdvEngine.Gui.Root();
         if (_font != null) root.WithFont(_font);
 
-        // ── Top-left: world info & seed controls ──
-        var info = new BdvEngine.Gui.Panel(16, 16, 320, 200)
-            .WithBackground(new Color(18, 22, 32, 230))
+        // ── Top-left: world info & seed controls. Phase 2 demo: VerticalLayout
+        //     auto-stacks children — no per-row Y math, just declare height and go.
+        var info = new BdvEngine.Gui.VerticalLayout(16, 16, 360, 230)
+            .WithSpacing(6f)
+            .WithPadding(new BdvEngine.Gui.Padding(14, 12, 14, 12));
+        info.WithBackground(new Color(18, 22, 32, 255))
             .WithBorder(new Color(95, 115, 160, 255), 2f);
-        info.Add(new BdvEngine.Gui.Label(14, 10, "Bdv Hex Strategy").WithScale(0.46f));
-        info.Add(new BdvEngine.Gui.Label(14, 42, $"{MAP_W}x{MAP_H} hex world").WithScale(0.30f).WithColor(new Color(180, 190, 210, 255)));
-        info.Add(new BdvEngine.Gui.Label(14, 62, "WASD pan · scroll zoom · click selects").WithScale(0.26f).WithColor(new Color(170, 180, 200, 255)));
-        info.Add(new BdvEngine.Gui.Button(14, 90, 110, 28, "Random Seed")
+
+        Label(info, "Bdv Hex Strategy", 0.46f, Color.White, h: 30);
+        Label(info, $"{MAP_W}x{MAP_H} hex world", 0.30f, new Color(180, 190, 210, 255), h: 18);
+        Label(info, "WASD pan · scroll zoom · click selects", 0.26f, new Color(170, 180, 200, 255), h: 16);
+
+        // Seed entry: type a number + Enter to apply, or hit Random.
+        var seedInput = new BdvEngine.Gui.TextInput(0, 0, 220, 28, _seedInput)
+            .WithFont(_font!, 0.30f)
+            .WithPlaceholder("Seed (Enter to apply)")
+            .OnChange(s => _seedInput = s)
+            .OnSubmit(s =>
+            {
+                if (int.TryParse(s, out int v) && v != 0) { _seed = v; Generate(v); }
+            });
+        info.Add(seedInput);
+        info.Add(new BdvEngine.Gui.Button(0, 0, 130, 28, "Random Seed")
             .WithFont(_font!, 0.30f)
             .OnClick(() =>
             {
                 _seed = new Random().Next(1, 999_999);
                 _seedInput = _seed.ToString();
+                seedInput.Text = _seedInput;
                 Generate(_seed);
             })
-            // Behavior-style attachable: button breathes while the cursor is over it.
-            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior()));
-        info.Add(new BdvEngine.Gui.LiveLabel(14, 128, () => $"Seed: {_seed}   Zoom: {Camera.Zoom:F3}x")
-            .WithScale(0.30f).WithColor(new Color(220, 225, 240, 255)));
-        info.Add(new BdvEngine.Gui.LiveLabel(14, 152, () =>
+            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior())
+            .AddBehavior(new BdvEngine.Gui.TooltipBehavior("Roll a fresh seed and regenerate the world.")));
+
+        // "Help" button — example of opening a new pane on click. Captures `root` in
+        // the OnClick closure so we can add/remove a child panel imperatively at runtime.
+        info.Add(new BdvEngine.Gui.Button(0, 0, 130, 28, "Help")
+            .WithFont(_font!, 0.30f)
+            .OnClick(() => OpenHelpPopup(root))
+            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior())
+            .AddBehavior(new BdvEngine.Gui.TooltipBehavior("Show controls and credits.")));
+        LiveLabel(info, () => $"Seed: {_seed}   Zoom: {Camera.Zoom:F3}x",
+            0.30f, new Color(220, 225, 240, 255), h: 18);
+        LiveLabel(info, () =>
             _hoverCol < 0 ? "Hover: —"
-                          : $"Hover: ({_hoverCol},{_hoverRow}) {TileAt(_hoverCol, _hoverRow)}{CivLabel(_hoverCol, _hoverRow)}"
-        ).WithScale(0.26f));
-        info.Add(new BdvEngine.Gui.LiveLabel(14, 172, () =>
+                          : $"Hover: ({_hoverCol},{_hoverRow}) {TileAt(_hoverCol, _hoverRow)}{CivLabel(_hoverCol, _hoverRow)}",
+            0.26f, Color.White, h: 16);
+        LiveLabel(info, () =>
             _selCol < 0 ? "Selected: —"
-                        : $"Selected: ({_selCol},{_selRow}) {TileAt(_selCol, _selRow)}{CivLabel(_selCol, _selRow)}"
-        ).WithScale(0.26f));
+                        : $"Selected: ({_selCol},{_selRow}) {TileAt(_selCol, _selRow)}{CivLabel(_selCol, _selRow)}",
+            0.26f, Color.White, h: 16);
         root.Add(info);
 
-        // ── Top-right: filters ──
-        float filterX = ViewportWidth - 230 - 16;
-        var filters = new BdvEngine.Gui.Panel(filterX, 16, 230, 160)
-            .WithBackground(new Color(18, 22, 32, 230))
-            .WithBorder(new Color(95, 115, 160, 255), 2f);
+        // ── Top-right (offset down from the engine's FPS / draw-call stats overlay) —
+        //     filters as a ToggleGroup (radio buttons): selecting one auto-deselects
+        //     the other and shows the active state visually. ──
+        var filters = (BdvEngine.Gui.Panel)new BdvEngine.Gui.Panel(-16, 110, 230, 180)
+            .AnchorTo(BdvEngine.Gui.Anchor.TopRight);
+        filters.WithBackground(new Color(18, 22, 32, 230))
+               .WithBorder(new Color(95, 115, 160, 255), 2f);
         filters.Add(new BdvEngine.Gui.Label(14, 10, "Filters").WithScale(0.40f));
-        filters.Add(new BdvEngine.Gui.Button(14, 42, 90, 26, "None")
-            .WithFont(_font!, 0.30f).OnClick(() => _filter = FilterMode.None)
-            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior(0.95f, 1.06f, 0.9f)));
-        filters.Add(new BdvEngine.Gui.Button(110, 42, 105, 26, "Civilization")
-            .WithFont(_font!, 0.26f).OnClick(() => _filter = FilterMode.Civilization)
-            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior(0.95f, 1.06f, 0.9f)));
-        filters.Add(new BdvEngine.Gui.LiveLabel(14, 80, () => $"Active: {_filter}")
-            .WithScale(0.28f).WithColor(new Color(220, 225, 240, 255)));
-        filters.Add(new BdvEngine.Gui.LiveLabel(14, 110, () =>
+
+        var filterGroup = new BdvEngine.Gui.ToggleGroup();
+        filters.Add(new BdvEngine.Gui.Toggle(14, 44, 200, 22, "None", _filter == FilterMode.None)
+            .WithFont(_font!, 0.30f)
+            .OnChange(v => { if (v) _filter = FilterMode.None; })
+            .InGroup(filterGroup));
+        filters.Add(new BdvEngine.Gui.Toggle(14, 70, 200, 22, "Civilization", _filter == FilterMode.Civilization)
+            .WithFont(_font!, 0.30f)
+            .OnChange(v => { if (v) _filter = FilterMode.Civilization; })
+            .InGroup(filterGroup));
+        filters.Add(new BdvEngine.Gui.LiveLabel(14, 102, () => $"Active: <color=#ffd87a>{_filter}</color>")
+            .WithScale(0.28f).WithColor(new Color(220, 225, 240, 255)).Rich());
+        filters.Add(new BdvEngine.Gui.LiveLabel(14, 130, () =>
         {
             if (_hoverCol < 0) return "Owner: —";
             sbyte d = _domMap[_hoverRow * MAP_W + _hoverCol];
-            return d < 0 ? "Owner: unowned" : $"Owner: {NATION_NAMES[d]}";
-        }).WithScale(0.26f));
+            if (d < 0) return "Owner: unowned";
+            // Color the nation name to match its faction tint via rich text.
+            string hex = d switch { 0 => "#5c8eff", 1 => "#ff7a73", 2 => "#c280e8", _ => "#ffffff" };
+            return $"Owner: <color={hex}>{NATION_NAMES[d]}</color>";
+        }).WithScale(0.26f).Rich());
         root.Add(filters);
 
         // ── Bottom-left: tile preview with sheet stepper ──
@@ -413,6 +448,67 @@ public sealed class HexStrategyGame : Game, IMessageHandler
 
         _gui = root;
         UpdatePreview();
+    }
+
+    /// <summary>Demo: spawn a centered modal panel at runtime when a button is clicked.
+    /// The panel adds itself to the root so it sits above existing siblings; its Close
+    /// button removes it from the parent's child list, taking the whole subtree with it.
+    /// Add `.AnchorTo(Anchor.MiddleCenter)` and offset by -W/2, -H/2 to center.</summary>
+    private void OpenHelpPopup(BdvEngine.Gui.Root root)
+    {
+        // Translucent backdrop that absorbs clicks (no children = clicks land on it,
+        // not the panels behind). Stretches the whole viewport via StretchAll.
+        var backdrop = (BdvEngine.Gui.Panel)new BdvEngine.Gui.Panel(0, 0, 0, 0)
+            .AnchorTo(BdvEngine.Gui.Anchor.StretchAll);
+        backdrop.WithBackground(new Color(0, 0, 0, 140));
+        backdrop.NoClip();
+
+        // Centered modal panel. Anchor.MiddleCenter sets Pivot = (0.5, 0.5), so the
+        // element's *center* sits on the anchor point — X/Y of 0 means exact center.
+        const float W = 420, H = 230;
+        var modal = new BdvEngine.Gui.VerticalLayout(0, 0, W, H)
+            .WithSpacing(10f)
+            .WithPadding(new BdvEngine.Gui.Padding(20));
+        modal.AnchorTo(BdvEngine.Gui.Anchor.MiddleCenter);
+        modal.WithBackground(new Color(22, 28, 42, 255))
+             .WithBorder(new Color(140, 160, 200, 255), 2f);
+
+        Label(modal, "Bdv Hex Strategy — Help", 0.46f, Color.White, 32);
+        Label(modal, "WASD or arrow keys: pan camera", 0.28f, new Color(220, 225, 240, 255), 18);
+        Label(modal, "Scroll wheel: zoom in/out", 0.28f, new Color(220, 225, 240, 255), 18);
+        Label(modal, "Click a hex: select it (yellow pulse)", 0.28f, new Color(220, 225, 240, 255), 18);
+        Label(modal, "Type a number + Enter into the seed field to regenerate.",
+            0.26f, new Color(170, 180, 200, 255), 18);
+
+        modal.Add(new BdvEngine.Gui.Button(0, 0, 100, 30, "Close")
+            .WithFont(_font!, 0.30f)
+            .OnClick(() => root.Children.Remove(backdrop))
+            .AddBehavior(new BdvEngine.Gui.PulseOnHoverBehavior()));
+
+        // Click-outside-to-dismiss. The modal is a child of the backdrop and is
+        // Pickable (Panel default), so hit-tests inside the modal land on the modal's
+        // children, not the backdrop. The backdrop only receives clicks in its own
+        // (uncovered) area = the dim region around the modal.
+        backdrop.AddBehavior(new BackdropDismissBehavior(root, backdrop));
+
+        backdrop.Add(modal);
+        // BringToFront after add ensures the popup is the topmost sibling even if other
+        // panels were re-added or re-ordered earlier. Equivalent to Unity's
+        // SetAsLastSibling — sibling list IS the z-order.
+        root.Add(backdrop).BringToFront();
+    }
+
+    /// <summary>Closes the parent backdrop when the backdrop itself receives a click
+    /// (i.e., the user clicked outside the modal). Demonstrates IElementBehavior with
+    /// the new pointer events API.</summary>
+    private sealed class BackdropDismissBehavior : BdvEngine.Gui.IElementBehavior
+    {
+        private readonly BdvEngine.Gui.Root _root;
+        private readonly BdvEngine.Gui.Element _backdrop;
+        public BackdropDismissBehavior(BdvEngine.Gui.Root root, BdvEngine.Gui.Element backdrop)
+        { _root = root; _backdrop = backdrop; }
+        public void OnPointerClick(BdvEngine.Gui.Element owner, BdvEngine.Gui.PointerEvent e)
+            => _root.Children.Remove(_backdrop);
     }
 
     private void StepPreview(int delta)

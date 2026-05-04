@@ -107,6 +107,7 @@ public sealed class Engine
         _game.ViewportWidth = size.X;
         _game.ViewportHeight = size.Y;
         _game.Update(delta);
+        InputManager.EndFrame();
     }
 
     private void OnRender(double delta)

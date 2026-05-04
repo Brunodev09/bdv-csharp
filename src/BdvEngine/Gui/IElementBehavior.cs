@@ -14,4 +14,13 @@ public interface IElementBehavior
 {
     void Update(Context ctx, Element owner) { }
     void Render(Context ctx, Element owner) { }
+
+    // Pointer events — default no-op so most behaviors don't bother. Root dispatches
+    // these alongside the owner element's virtual handlers.
+    void OnPointerEnter(Element owner, PointerEvent e) { }
+    void OnPointerExit (Element owner, PointerEvent e) { }
+    void OnPointerDown (Element owner, PointerEvent e) { }
+    void OnPointerUp   (Element owner, PointerEvent e) { }
+    void OnPointerClick(Element owner, PointerEvent e) { }
+    void OnPointerDrag (Element owner, PointerEvent e) { }
 }

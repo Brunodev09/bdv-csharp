@@ -30,50 +30,50 @@ public sealed class Slider : Element
     public Slider WithColors(Color track, Color fill, Color handle)
     { TrackColor = track; FillColor = fill; HandleColor = handle; return this; }
 
-    public override void Update(Context ctx)
+    public override void OnPointerDown(PointerEvent e)
     {
-        if (!Visible || !Enabled) { _dragging = false; base.Update(ctx); return; }
+        if (!Enabled) return;
+        _dragging = true;
+        UpdateValueFromMouseX(e.X);
+    }
 
-        if (!_dragging && ctx.Hovered == this && ctx.MouseClicked)
+    public override void OnPointerDrag(PointerEvent e)
+    {
+        if (_dragging) UpdateValueFromMouseX(e.X);
+    }
+
+    public override void OnPointerUp(PointerEvent e)
+    {
+        if (!_dragging) return;
+        _dragging = false;
+        OnReleaseCallback?.Invoke(Value);
+    }
+
+    private void UpdateValueFromMouseX(float mouseX)
+    {
+        var (ax, _, aw, _) = AbsoluteRect();
+        float t = Math.Clamp((mouseX - ax) / aw, 0f, 1f);
+        float newVal = Min + t * (Max - Min);
+        if (newVal != Value)
         {
-            _dragging = true;
-            ctx.Capturing = this;
+            Value = newVal;
+            OnChangeCallback?.Invoke(Value);
         }
-
-        if (_dragging)
-        {
-            var (ax, _) = AbsolutePosition();
-            float t = Math.Clamp((ctx.MouseX - ax) / Width, 0f, 1f);
-            float newVal = Min + t * (Max - Min);
-            if (newVal != Value)
-            {
-                Value = newVal;
-                OnChangeCallback?.Invoke(Value);
-            }
-            if (ctx.MouseReleased)
-            {
-                _dragging = false;
-                OnReleaseCallback?.Invoke(Value);
-            }
-        }
-
-        base.Update(ctx);
     }
 
     public override void Render(Context ctx)
     {
         if (!Visible) return;
-        var (ax, ay) = AbsolutePosition();
+        var (ax, ay, aw, ah) = AbsoluteRect();
         float ws = ctx.WorldScale;
         var w0 = ctx.ToWorld(ax, ay);
-        SpriteBatcher.DrawSolid(w0.X, w0.Y, Width * ws, Height * ws, TrackColor, SpriteLayer.UIBack);
+        SpriteBatcher.DrawSolid(w0.X, w0.Y, aw * ws, ah * ws, TrackColor, SpriteLayer.UIBack);
         float t = Max > Min ? (Value - Min) / (Max - Min) : 0f;
-        SpriteBatcher.DrawSolid(w0.X, w0.Y, Width * t * ws, Height * ws, FillColor, SpriteLayer.UIBack);
+        SpriteBatcher.DrawSolid(w0.X, w0.Y, aw * t * ws, ah * ws, FillColor, SpriteLayer.UIBack);
         // Thin vertical handle, slightly taller than the track for visibility.
-        var wh = ctx.ToWorld(ax + Width * t - 2f, ay - 3f);
-        SpriteBatcher.DrawSolid(wh.X, wh.Y, 4f * ws, (Height + 6f) * ws, HandleColor, SpriteLayer.UIBack);
-        // Border via Draw lines so it stays crisp on top.
-        Draw.RectOutline(w0.X, w0.Y, Width * ws, Height * ws, BorderColor);
+        var wh = ctx.ToWorld(ax + aw * t - 2f, ay - 3f);
+        SpriteBatcher.DrawSolid(wh.X, wh.Y, 4f * ws, (ah + 6f) * ws, HandleColor, SpriteLayer.UIBack);
+        Draw.RectOutline(w0.X, w0.Y, aw * ws, ah * ws, BorderColor);
         base.Render(ctx);
     }
 }
