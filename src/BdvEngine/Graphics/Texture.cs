@@ -101,8 +101,14 @@ public sealed class Texture : IMessageHandler, IDisposable
         }
         _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
         _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
-        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+        // Nearest filtering matches LoadFromAsset (pixel-art assets stay
+        // crisp). The previous Linear default made every procedural
+        // texture (built atlases — props, mobs) bilinear-sampled, which
+        // visibly softened sprite art at any zoom != 1×. Callers that
+        // genuinely want smooth filtering can set it explicitly via GL
+        // after upload.
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+        _gl.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
         IsLoaded = true;
     }
 

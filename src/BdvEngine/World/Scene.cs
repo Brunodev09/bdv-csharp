@@ -16,4 +16,5 @@ public sealed class Scene
     public void Load() => Root.Load();
     public void Update(double deltaTime) => Root.Update(deltaTime);
     public void Render(Shader shader) => Root.Render(shader);
+    public void RebakeMatrices() => Root.RebakeMatrices();
 }

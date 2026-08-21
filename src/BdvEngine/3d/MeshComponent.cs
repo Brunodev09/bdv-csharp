@@ -22,6 +22,12 @@ public sealed class MeshComponent : BaseComponent
     private readonly Material _material;
     private readonly string _materialName;
 
+    /// <summary>The mesh drawn by this component (read by the unified renderer's dispatch).</summary>
+    public Mesh Mesh => _mesh;
+
+    /// <summary>The material this component draws with (read by the unified renderer's dispatch).</summary>
+    public Material Material => _material;
+
     public MeshComponent(Mesh mesh, string materialName)
         : base(new MeshComponentData { Name = "mesh", MaterialName = materialName, Mesh = mesh })
     {

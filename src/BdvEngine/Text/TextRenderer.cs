@@ -22,7 +22,7 @@ public static class TextRenderer
     /// </summary>
     public static void DrawScreen(Font font, string text, float screenX, float screenY,
         float pixelScale, Color color,
-        Camera2D camera, int viewportW, int viewportH,
+        Camera camera, int viewportW, int viewportH,
         TextAnim anim = default, TextAlign align = TextAlign.Left,
         SpriteLayer layer = SpriteLayer.UI, float sortY = 0f)
     {
@@ -151,28 +151,138 @@ public static class TextRenderer
         }
     }
 
-    /// <summary>Draw text in screen pixels with simple inline color tags:
+    /// <summary>Draw text in screen pixels with simple inline tags:
     ///   <c>&lt;color=#rrggbb&gt;…&lt;/color&gt;</c>
-    /// Nesting is supported via a color stack. Other tags are passed through verbatim.</summary>
+    ///   <c>&lt;link=id&gt;…&lt;/link&gt;</c>
+    /// Nesting is supported via a color stack. Link tags don't render
+    /// any decoration on their own — pair with a color tag for visual
+    /// affordance. Other tags are passed through verbatim.</summary>
     public static void DrawScreenRich(Font font, string text, float screenX, float screenY,
         float pixelScale, Color baseColor,
-        Camera2D camera, int viewportW, int viewportH)
+        Camera camera, int viewportW, int viewportH)
+    {
+        DrawScreenRich(font, text, screenX, screenY, pixelScale, baseColor, camera,
+            viewportW, viewportH, links: null);
+    }
+
+    /// <summary>Same as <see cref="DrawScreenRich"/> but also collects
+    /// per-link bounding rects in SCREEN space into
+    /// <paramref name="links"/>. A link spanning multiple lines (after
+    /// a hard line break) produces one rect per line. Caller passes
+    /// an empty list; the list is cleared before population. Used by
+    /// <see cref="BdvEngine.Gui.Label"/>'s hit-test to dispatch
+    /// click handlers to <c>&lt;link=id&gt;</c> spans.</summary>
+    public static void DrawScreenRich(Font font, string text, float screenX, float screenY,
+        float pixelScale, Color baseColor,
+        Camera camera, int viewportW, int viewportH,
+        List<RichLinkSpan>? links)
     {
         if (string.IsNullOrEmpty(text)) return;
+        links?.Clear();
         float invZoom = 1f / camera.Zoom;
         var world = camera.ScreenToWorld(screenX, screenY, viewportW, viewportH);
-        DrawWorldRich(font, text, world.X, world.Y, pixelScale * invZoom, baseColor);
+        DrawWorldRich(font, text, world.X, world.Y, pixelScale * invZoom, baseColor,
+            // Inline screen-space tracker — converts the world-space
+            // cursor advances inside DrawWorldRich back to screen
+            // pixels so the collected rects match the GUI hit-test
+            // coord system without needing camera conversion later.
+            links == null ? null : new ScreenLinkTracker(screenX, screenY, pixelScale, font, links));
+    }
+
+    /// <summary>One contiguous on-screen rectangle for a
+    /// <c>&lt;link=...&gt;</c> span. ID matches the tag's id; X/Y/W/H
+    /// are screen-space pixels. A multi-line link produces one
+    /// RichLinkSpan per line.</summary>
+    public readonly struct RichLinkSpan
+    {
+        public readonly string Id;
+        public readonly float X, Y, W, H;
+        public RichLinkSpan(string id, float x, float y, float w, float h)
+        { Id = id; X = x; Y = y; W = w; H = h; }
+        public bool Contains(float sx, float sy) => sx >= X && sx <= X + W && sy >= Y && sy <= Y + H;
+    }
+
+    /// <summary>Helper passed into the world-space renderer that
+    /// translates per-glyph cursor advances into screen-space rects
+    /// for any active link span. Tracks lineY + cursor in screen
+    /// units (= pixelScale * world-unit) so the result is directly
+    /// usable for GUI hit-test.</summary>
+    internal sealed class ScreenLinkTracker
+    {
+        public readonly float OriginX, OriginY;
+        public readonly float Scale;          // pixels per font-unit
+        public readonly Font Font;
+        public readonly List<RichLinkSpan> Out;
+        public string? CurrentLinkId;
+        public float SpanStartCursor;         // cursor (font-units) where current span began on this line
+        public ScreenLinkTracker(float ox, float oy, float scale, Font font, List<RichLinkSpan> outList)
+        { OriginX = ox; OriginY = oy; Scale = scale; Font = font; Out = outList; }
+
+        public void OpenLink(string id, float cursorFontUnits)
+        {
+            CurrentLinkId = id;
+            SpanStartCursor = cursorFontUnits;
+        }
+        public void CloseLink(float lineYFontUnits, float cursorFontUnits)
+        {
+            if (CurrentLinkId == null) return;
+            EmitRect(lineYFontUnits, cursorFontUnits);
+            CurrentLinkId = null;
+        }
+        public void OnNewline(float lineYFontUnits, float cursorFontUnits)
+        {
+            if (CurrentLinkId == null) return;
+            EmitRect(lineYFontUnits, cursorFontUnits);
+            // Span continues on next line — restart at the line's
+            // leading edge (cursor reset to 0 happens in the renderer
+            // after this call).
+            SpanStartCursor = 0f;
+        }
+        private void EmitRect(float lineYFontUnits, float cursorFontUnits)
+        {
+            float x0 = OriginX + SpanStartCursor * Scale;
+            float y0 = OriginY + lineYFontUnits * Scale;
+            float w  = (cursorFontUnits - SpanStartCursor) * Scale;
+            float h  = Font.LineAdvance * Scale;
+            // OriginY in DrawScreenRich is the baseline; shift up so
+            // the rect sits over the visible glyphs, not below.
+            y0 -= Font.Ascent * Scale;
+            if (w > 0 && h > 0)
+                Out.Add(new RichLinkSpan(CurrentLinkId!, x0, y0, w, h));
+        }
     }
 
     private static void DrawWorldRich(Font font, string text, float x, float y, float scale, Color baseColor)
+        => DrawWorldRich(font, text, x, y, scale, baseColor, links: null);
+
+    private static void DrawWorldRich(Font font, string text, float x, float y, float scale, Color baseColor,
+        ScreenLinkTracker? links)
     {
         var stack = new Stack<Color>();
         stack.Push(baseColor);
         float cursor = 0f;
+        float lineY = y; // current baseline; advances on '\n'
+        // lineYFontUnits / cursorFontUnits are in FONT units (cursor
+        // is already font-units, and we use (lineY - y)/scale to
+        // recover font units relative to baseline). The tracker uses
+        // these to produce screen-space rects.
+        float baselineFontY = 0f; // 0 at first line; +LineAdvance per newline
         int i = 0;
         while (i < text.Length)
         {
             char c = text[i];
+            if (c == '\n')
+            {
+                // Hard line break — finalize any open link span on
+                // this line + reset horizontal cursor + drop baseline
+                // by one font line.
+                links?.OnNewline(baselineFontY, cursor);
+                cursor = 0f;
+                lineY += font.LineAdvance * scale;
+                baselineFontY += font.LineAdvance;
+                i++;
+                continue;
+            }
             if (c == '<')
             {
                 int end = text.IndexOf('>', i + 1);
@@ -192,6 +302,17 @@ public static class TextRenderer
                         if (stack.Count > 1) stack.Pop();
                         i = end + 1; continue;
                     }
+                    else if (tag.StartsWith("link="))
+                    {
+                        string id = tag.Substring(5);
+                        links?.OpenLink(id, cursor);
+                        i = end + 1; continue;
+                    }
+                    else if (tag == "/link")
+                    {
+                        links?.CloseLink(baselineFontY, cursor);
+                        i = end + 1; continue;
+                    }
                 }
             }
             if (!font.TryGetQuad(c, ref cursor, 0f,
@@ -202,7 +323,7 @@ public static class TextRenderer
             {
                 float gw = (lx1 - lx0) * scale, gh = (ly1 - ly0) * scale;
                 float cx = x + (lx0 + (lx1 - lx0) * 0.5f) * scale;
-                float cy = y + (ly0 + (ly1 - ly0) * 0.5f) * scale;
+                float cy = lineY + (ly0 + (ly1 - ly0) * 0.5f) * scale;
                 SpriteBatcher.DrawTextureUV(font.Material, u0, v0, u1, v1,
                     cx - gw * 0.5f, cy - gh * 0.5f, gw, gh, stack.Peek(), SpriteLayer.UI);
             }

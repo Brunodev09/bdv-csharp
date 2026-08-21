@@ -19,6 +19,8 @@ public sealed class SimObject
     public bool IsLoaded { get; private set; }
     public SimObject? Parent => _parent;
     public IReadOnlyList<SimObject> Children => _children;
+    /// <summary>This object's components (read by the unified renderer to collect mesh draws).</summary>
+    public IReadOnlyList<IComponent> Components => _components;
     public Matrix4x4 LocalMatrix => _localMatrix;
     public Matrix4x4 WorldMatrix => _worldMatrix;
 
@@ -93,5 +95,17 @@ public sealed class SimObject
         foreach (var c in _components) c.Render(shader);
         foreach (var b in _behaviors) b.Render(shader);
         foreach (var ch in _children) ch.Render(shader);
+    }
+
+    /// <summary>Recompute local + world matrices for this whole subtree WITHOUT running
+    /// component/behavior updates. The unified engine calls this once right before rendering, so
+    /// a transform mutated during Update (game logic OR a behavior) shows up the SAME frame —
+    /// fixes the one-frame-lag the manual 3D path had (matrices were only baked at the top of
+    /// <see cref="Update"/>, before behaviors ran).</summary>
+    public void RebakeMatrices()
+    {
+        _localMatrix = Transform.GetMatrix();
+        _worldMatrix = _parent != null ? _localMatrix * _parent._worldMatrix : _localMatrix;
+        foreach (var ch in _children) ch.RebakeMatrices();
     }
 }

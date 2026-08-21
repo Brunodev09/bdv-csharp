@@ -16,6 +16,11 @@ public sealed class Button : Element
     public Color TextColor  = Color.White;
     public Font? Font;
     public float TextScale  = 0.4f;
+    /// <summary>Horizontal alignment of the button label. Defaults to Center
+    /// (classic button look). Use Left for list-row style buttons.</summary>
+    public TextAlign Align = TextAlign.Center;
+    /// <summary>Padding inset from the edge for non-center alignments.</summary>
+    public float TextPadding = 8f;
     public Action? OnClickCallback;
 
     private bool _pressed;
@@ -30,6 +35,8 @@ public sealed class Button : Element
     {
         BgIdle = idle; BgHover = hover; BgPressed = pressed; return this;
     }
+    public Button WithAlign(TextAlign align) { Align = align; return this; }
+    public Button WithTextPadding(float pad) { TextPadding = pad; return this; }
 
     public override void OnPointerDown (PointerEvent e) { if (Enabled) _pressed = true; }
     public override void OnPointerUp   (PointerEvent e) { _pressed = false; }
@@ -44,19 +51,37 @@ public sealed class Button : Element
                   : _pressed ? BgPressed
                   : ctx.Hovered == this ? BgHover
                   : BgIdle;
-        float a = EffectiveAlpha;
         var w = ctx.ToWorld(rx, ry);
         float ws = ctx.WorldScale;
-        SpriteBatcher.DrawSolid(w.X, w.Y, rw * ws, rh * ws, GuiHelpers.Mul(bg, a), SpriteLayer.UIBack);
+        SpriteBatcher.DrawSolid(w.X, w.Y, rw * ws, rh * ws, GuiHelpers.Apply(bg, this), SpriteLayer.UIBack);
 
         var font = Font ?? ctx.DefaultFont;
-        if (font != null)
+        if (font != null && !string.IsNullOrEmpty(Label))
         {
             float labelScale = TextScale * RenderScale;
+            // Auto-shrink the label so it never visually spills past
+            // the button's edges. Matches Label.AutoFit's behaviour —
+            // single-line button labels are the common case, and
+            // letting them overflow into adjacent buttons (e.g. tight
+            // diplomacy-matrix cells) looks broken. Floored at 0.10
+            // for legibility.
+            float avail = rw - 2f * TextPadding;
+            if (avail > 0f)
+            {
+                float measured = font.Measure(Label) * labelScale;
+                if (measured > avail) labelScale *= avail / measured;
+                if (labelScale < 0.10f) labelScale = 0.10f;
+            }
             float baseline = ry + rh * 0.5f + font.Ascent * labelScale * 0.32f;
-            TextRenderer.DrawScreen(font, Label, rx + rw * 0.5f, baseline,
-                labelScale, GuiHelpers.Mul(TextColor, a), ctx.Camera, ctx.ViewportW, ctx.ViewportH,
-                default, TextAlign.Center);
+            float tx = Align switch
+            {
+                TextAlign.Left  => rx + TextPadding,
+                TextAlign.Right => rx + rw - TextPadding,
+                _               => rx + rw * 0.5f,
+            };
+            TextRenderer.DrawScreen(font, Label, tx, baseline,
+                labelScale, GuiHelpers.Apply(TextColor, this), ctx.Camera, ctx.ViewportW, ctx.ViewportH,
+                default, Align);
         }
         base.Render(ctx);
     }

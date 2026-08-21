@@ -30,6 +30,26 @@ public abstract class Element
     public float Y;
     public float Width;
     public float Height;
+    /// <summary>Optional stable identifier — set by the JSON UI
+    /// loader from <c>node.name</c> so game code can find widgets
+    /// after a hot reload without keeping direct references. Null
+    /// when unset.</summary>
+    public string? Name;
+
+    // ── Layout hints — consumed by flex / grid parent containers.
+    //    Non-container ancestors ignore these and continue positioning
+    //    by absolute X/Y as before.
+    /// <summary>Per-axis size hint. When set, a flex / grid parent
+    /// uses this instead of <see cref="Width"/> / <see cref="Height"/>
+    /// to decide the child's assigned size on that axis. Null (default)
+    /// = fall back to the raw pixel Width/Height field so old code
+    /// keeps working.</summary>
+    public Sizing? WidthSpec;
+    public Sizing? HeightSpec;
+    /// <summary>Shorthand for the same value on both axes — set by
+    /// the loader for the <c>"size"</c> keyword. Individual axes
+    /// (WidthSpec / HeightSpec) take precedence when present.</summary>
+    public Sizing? SizeSpec { set { WidthSpec = value; HeightSpec = value; } }
 
     /// <summary>Top-left of the element's anchor rect inside the parent (normalized 0..1).</summary>
     public Vector2 AnchorMin = Vector2.Zero;
@@ -48,12 +68,28 @@ public abstract class Element
     /// <summary>Self alpha 0..1 — multiplies all rendered colors. Inherited
     /// down the subtree via <see cref="EffectiveAlpha"/> (CanvasGroup-style).</summary>
     public float Alpha = 1f;
+    /// <summary>Per-element color multiplier. White (default) = pass-through.
+    /// Cascades down the subtree via <see cref="EffectiveModulate"/>, so
+    /// setting this on a Panel tints the panel AND every widget inside it.
+    /// Channel-wise multiply on RGBA, so dimming, hue-shifting, and
+    /// translucency all work from a single knob.</summary>
+    public Color Modulate = Color.White;
     /// <summary>If false, this element and its subtree don't accept pointer input.
     /// Combined with low Alpha gives the standard "greyed out" look.</summary>
     public bool Interactable = true;
 
     /// <summary>Self * parent chain. 0 = fully transparent.</summary>
     public float EffectiveAlpha => Alpha * (Parent?.EffectiveAlpha ?? 1f);
+    /// <summary>Self * parent chain — channel-wise color multiply. White at
+    /// the root means leaves render their natural color; any ancestor with a
+    /// non-white modulate paints the whole subtree.</summary>
+    public Color EffectiveModulate
+        => Parent == null ? Modulate : GuiHelpers.MulColor(Modulate, Parent.EffectiveModulate);
+
+    /// <summary>Fluent setter for <see cref="Alpha"/>. Returns the element for chaining.</summary>
+    public Element WithAlpha(float alpha) { Alpha = Math.Clamp(alpha, 0f, 1f); return this; }
+    /// <summary>Fluent setter for <see cref="Modulate"/>. Returns the element for chaining.</summary>
+    public Element WithModulate(Color color) { Modulate = color; return this; }
     /// <summary>True only if self & every ancestor are Interactable + Visible + Enabled.</summary>
     public bool EffectiveInteractable
         => Interactable && Visible && Enabled && (Parent?.EffectiveInteractable ?? true);
@@ -198,7 +234,7 @@ public abstract class Element
         return (rx, ry);
     }
 
-    public bool ContainsScreenPoint(float sx, float sy)
+    public virtual bool ContainsScreenPoint(float sx, float sy)
     {
         var (rx, ry, rw, rh) = AbsoluteRect();
         return sx >= rx && sx < rx + rw && sy >= ry && sy < ry + rh;

@@ -55,7 +55,7 @@ public sealed class Image : Element
         var (rx, ry, rw, rh) = RenderRect();
         float invZoom = 1f / ctx.Camera.Zoom;
         var topLeft = ctx.Camera.ScreenToWorld(rx, ry, ctx.ViewportW, ctx.ViewportH);
-        Color tint = GuiHelpers.Mul(Tint, EffectiveAlpha);
+        Color tint = GuiHelpers.Apply(Tint, this);
 
         if (IsSliced) RenderSliced(topLeft.X, topLeft.Y, rw * invZoom, rh * invZoom, tint);
         else SpriteBatcher.DrawTextureUV(Material, U0, V0, U1, V1,

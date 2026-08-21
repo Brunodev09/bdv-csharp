@@ -1,3 +1,4 @@
+using System.Numerics;
 using Silk.NET.OpenGL;
 
 namespace BdvEngine;
@@ -6,9 +7,17 @@ public sealed class Mesh : IDisposable
 {
     public const int FloatsPerVertex = 8; // pos(3) + normal(3) + uv(2)
 
+    /// <summary>Local-space axis-aligned bounds (from the vertex positions) — used by ray picking.</summary>
+    public Vector3 BoundsMin { get; private set; }
+    public Vector3 BoundsMax { get; private set; }
+
+    /// <summary>Draw primitive — Triangles by default; Lines for helpers like a ground grid.</summary>
+    public PrimitiveType Primitive { get; set; } = PrimitiveType.Triangles;
+
     private readonly GL _gl = Gfx.Gl;
     private readonly float[] _vertexData;
     private readonly ushort[]? _indexData;
+    private readonly uint[]? _indexData32;   // 32-bit index path for meshes with > 65 535 vertices (glTF)
     private readonly int _vertexCount;
     private readonly int _indexCount;
 
@@ -23,6 +32,34 @@ public sealed class Mesh : IDisposable
         _vertexCount = vertices.Length / FloatsPerVertex;
         _indexData = indices;
         _indexCount = indices?.Length ?? 0;
+        ComputeBounds();
+    }
+
+    /// <summary>32-bit indexed mesh — for imported models (glTF) whose primitives exceed the
+    /// 65 535-vertex limit of the ushort path.</summary>
+    public Mesh(float[] vertices, uint[] indices32)
+    {
+        _vertexData = vertices;
+        _vertexCount = vertices.Length / FloatsPerVertex;
+        _indexData32 = indices32;
+        _indexCount = indices32.Length;
+        ComputeBounds();
+    }
+
+    private void ComputeBounds()
+    {
+        if (_vertexCount == 0) return;
+        var min = new Vector3(float.MaxValue);
+        var max = new Vector3(float.MinValue);
+        for (int i = 0; i < _vertexCount; i++)
+        {
+            int o = i * FloatsPerVertex;
+            var p = new Vector3(_vertexData[o], _vertexData[o + 1], _vertexData[o + 2]);
+            min = Vector3.Min(min, p);
+            max = Vector3.Max(max, p);
+        }
+        BoundsMin = min;
+        BoundsMax = max;
     }
 
     private unsafe void EnsureGl()
@@ -52,6 +89,13 @@ public sealed class Mesh : IDisposable
             fixed (ushort* p = _indexData)
                 _gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(_indexData.Length * sizeof(ushort)), p, BufferUsageARB.StaticDraw);
         }
+        else if (_indexData32 != null)
+        {
+            _ibo = _gl.GenBuffer();
+            _gl.BindBuffer(BufferTargetARB.ElementArrayBuffer, _ibo);
+            fixed (uint* p = _indexData32)
+                _gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(_indexData32.Length * sizeof(uint)), p, BufferUsageARB.StaticDraw);
+        }
 
         _gl.BindVertexArray(0);
     }
@@ -62,12 +106,13 @@ public sealed class Mesh : IDisposable
         _gl.BindVertexArray(_vao);
         if (_ibo != 0)
         {
-            _gl.DrawElements(PrimitiveType.Triangles, (uint)_indexCount, DrawElementsType.UnsignedShort, null);
+            var type = _indexData32 != null ? DrawElementsType.UnsignedInt : DrawElementsType.UnsignedShort;
+            _gl.DrawElements(Primitive, (uint)_indexCount, type, null);
             GLStats.IncDrawCalls(_indexCount);
         }
         else
         {
-            _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)_vertexCount);
+            _gl.DrawArrays(Primitive, 0, (uint)_vertexCount);
             GLStats.IncDrawCalls(_vertexCount);
         }
         _gl.BindVertexArray(0);

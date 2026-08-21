@@ -20,7 +20,7 @@ public sealed class TooltipBehavior : IElementBehavior
     public float TextScale = 0.26f;
     public float Padding = 8f;
     public Font? Font;
-    public Color Background = new(15, 18, 26, 240);
+    public Color Background = new(15, 18, 26, 255);
     public Color Border     = new(120, 130, 160, 255);
     public Color TextColor  = new(235, 240, 250, 255);
 
@@ -71,14 +71,19 @@ public sealed class TooltipBehavior : IElementBehavior
 
         float ws = ctx.WorldScale;
         var w0 = ctx.ToWorld(tx, ty);
-        // UIBack so background renders before UI-layer text — otherwise the white-pixel
-        // batch (created late, when the tooltip pops) flushes after the font batch and
-        // covers the tooltip's own text.
-        SpriteBatcher.DrawSolid(w0.X, w0.Y, w * ws, h * ws, Background, SpriteLayer.UIBack);
+        // Draw on the Overlay layer — the always-on-top tier that flushes
+        // after all regular UI. Previously the background went on UIBack,
+        // which any panel/sidebar/modal rendered *later* would overpaint
+        // (the layer system made this routine, leaving tooltips as floating
+        // text over an apparently transparent box). Overlay can't be
+        // overpainted by ordinary UI. Within Overlay the solid is submitted
+        // before the text, so the box stays behind its own glyphs.
+        SpriteBatcher.DrawSolid(w0.X, w0.Y, w * ws, h * ws, Background, SpriteLayer.Overlay);
         Draw.RectOutline(w0.X, w0.Y, w * ws, h * ws, Border);
 
         float baseline = ty + Padding + font.Ascent * TextScale;
         TextRenderer.DrawScreen(font, Text, tx + Padding, baseline,
-            TextScale, TextColor, ctx.Camera, ctx.ViewportW, ctx.ViewportH);
+            TextScale, TextColor, ctx.Camera, ctx.ViewportW, ctx.ViewportH,
+            layer: SpriteLayer.Overlay);
     }
 }

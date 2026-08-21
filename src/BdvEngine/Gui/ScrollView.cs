@@ -19,12 +19,22 @@ public sealed class ScrollView : Panel
     public Color ScrollBarThumb = new(95, 115, 160, 255);
     public float ScrollBarWidth = 10f;
 
+    /// <summary>True while the user is dragging the scrollbar thumb. Used to map
+    /// raw cursor Y → ScrollY each frame independently of click hit-testing.</summary>
+    private bool _draggingThumb;
+    /// <summary>Pixel offset *within* the thumb where the user grabbed it, so the
+    /// drag feels anchored under the cursor instead of jumping to thumb-top.</summary>
+    private float _dragGrabOffset;
+
     /// <summary>Add children here, not on the ScrollView itself — they'll be shifted
     /// by ScrollY automatically. Forwards through <see cref="Element.Add{T}"/>.</summary>
     public Panel Content { get; }
 
     public ScrollView(float x, float y, float w, float h) : base(x, y, w, h)
     {
+        // A scroll view MUST clip — its content is shifted by ScrollY and the
+        // overflow has to be hidden. (Panel.ClipChildren is opt-in/false now.)
+        ClipChildren = true;
         Content = new Panel(0, 0, w, 0);
         Content.NoClip();
         Content.Pickable = false;
@@ -48,10 +58,62 @@ public sealed class ScrollView : Panel
                 ScrollY = Math.Clamp(ScrollY, 0f, MathF.Max(0f, ContentHeight - Height));
             }
         }
+
+        // Scrollbar interaction: click on track jumps a page; click on thumb starts
+        // a drag that maps cursor Y → ScrollY. Tracks LMB state ourselves rather
+        // than relying on per-element pointer dispatch so the drag survives even
+        // when the cursor wanders off the thumb (otherwise dragging feels sticky).
+        UpdateScrollbarInput(ctx);
+
         Content.Y = -ScrollY;
         Content.Width = MathF.Max(0f, Width - ScrollBarWidth - 4f);
         Content.Height = ContentHeight;
         base.Update(ctx);
+    }
+
+    private void UpdateScrollbarInput(Context ctx)
+    {
+        if (ContentHeight <= Height) { _draggingThumb = false; return; }
+
+        var (rx, ry, rw, rh) = AbsoluteRect();
+        float trackX = rx + rw - ScrollBarWidth - 2f;
+        float visibleRatio = Height / ContentHeight;
+        float thumbH = MathF.Max(20f, rh * visibleRatio);
+        float scrollRange = MathF.Max(1f, ContentHeight - Height);
+        float trackTravel = MathF.Max(1f, rh - thumbH);
+        float thumbY = ry + trackTravel * (ScrollY / scrollRange);
+
+        // ctx.MouseX/Y are already in canvas-space coords.
+        float cx = ctx.MouseX, cy = ctx.MouseY;
+
+        if (_draggingThumb)
+        {
+            if (!ctx.MouseDown) { _draggingThumb = false; return; }
+            // Map cursor Y back to ScrollY, anchored at the grab offset.
+            float newThumbY = cy - _dragGrabOffset;
+            float t = (newThumbY - ry) / trackTravel;
+            ScrollY = Math.Clamp(t, 0f, 1f) * scrollRange;
+            return;
+        }
+
+        // Only react on the initial press frame so we don't re-grab every tick.
+        if (!ctx.MouseClicked) return;
+        bool overTrack = cx >= trackX && cx <= trackX + ScrollBarWidth
+                      && cy >= ry     && cy <= ry + rh;
+        if (!overTrack) return;
+
+        bool onThumb = cy >= thumbY && cy <= thumbY + thumbH;
+        if (onThumb)
+        {
+            _draggingThumb = true;
+            _dragGrabOffset = cy - thumbY;
+        }
+        else
+        {
+            // Click on the empty track: page-jump toward the cursor by one viewport.
+            float dir = cy < thumbY ? -1f : 1f;
+            ScrollY = Math.Clamp(ScrollY + dir * Height, 0f, scrollRange);
+        }
     }
 
     private bool HoverIsInsideMe(Context ctx)

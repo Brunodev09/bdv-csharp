@@ -8,7 +8,7 @@ namespace BdvEngine.Gui;
 /// </summary>
 public sealed class Context
 {
-    public Camera2D Camera = null!;
+    public Camera Camera = null!;
     public int ViewportW;
     public int ViewportH;
     public Font? DefaultFont;

@@ -117,7 +117,7 @@ public sealed class TileMap : IDisposable
         if (_lodChunks != null) foreach (var c in _lodChunks) c.MarkDirty();
     }
 
-    public void Render(Camera2D camera, int viewportW, int viewportH)
+    public void Render(Camera camera, int viewportW, int viewportH)
     {
         if (!TileSet.ComputeUVs()) return;
 
