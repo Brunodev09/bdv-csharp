@@ -17,10 +17,16 @@ internal sealed class MeshRenderer : IDisposable
     private readonly UnlitMeshShader _unlit = new();
     private readonly LitMeshShader _lit = new();
     private readonly PbrMeshShader _pbr = new();
+    private readonly SkinnedLitMeshShader _skinnedLit = new();
+    private readonly SkinnedPbrMeshShader _skinnedPbr = new();
     private readonly BillboardShader _billboard = new();
     private readonly Mesh _quad = UnitQuad();
 
     private readonly List<(Matrix4x4 world, Mesh mesh, Material mat)> _queue = new();
+    // Skinned draws are a separate lane: each needs its own joint palette bound, so they can't be
+    // batched by shader the way static draws are.
+    private readonly List<(Matrix4x4 world, SkinnedMeshComponent smc)> _skinned = new();
+    private int _frame;
     private readonly Dictionary<MeshShader, List<(Matrix4x4 world, Mesh mesh, Material mat)>> _groups = new();
     private readonly List<(Vector3 anchor, BillboardComponent bb)> _billboards = new();
     private readonly GpuLight[] _lights = new GpuLight[MeshShader.MaxLights];
@@ -50,7 +56,9 @@ internal sealed class MeshRenderer : IDisposable
 
     public void Render(Scene scene, Camera cam, WorldEnvironment env, int vw, int vh)
     {
+        _frame++;
         _queue.Clear();
+        _skinned.Clear();
         _billboards.Clear();
 
         // Light 0 is always the environment sun (keeps day/night etc. working).
@@ -93,7 +101,38 @@ internal sealed class MeshRenderer : IDisposable
             }
         }
 
+        DrawSkinned(frame);
         DrawBillboards(frame, cam);
+    }
+
+    /// <summary>Skinned meshes. Grouped by shader like the static lane, but each draw also binds
+    /// its skeleton's joint palette. The palette is computed on the <see cref="Skin"/> and is
+    /// frame-guarded, so a character split across several materials pays for it once.</summary>
+    private void DrawSkinned(in FrameParams frame)
+    {
+        if (_skinned.Count == 0) return;
+
+        SkinnedMeshShader? bound = null;
+        foreach (var (world, smc) in _skinned)
+        {
+            var shader = smc.Material.Shading == MaterialShading.Pbr ? _skinnedPbr : (SkinnedMeshShader)_skinnedLit;
+            if (!ReferenceEquals(shader, bound))
+            {
+                shader.Use();
+                shader.SetFrame(frame);
+                bound = shader;
+            }
+
+            if (smc.Material.DoubleSided) _gl.Disable(EnableCap.CullFace);
+            else _gl.Enable(EnableCap.CullFace);
+
+            smc.Skin.UpdatePalette(world, _frame);
+            shader.SetJoints(smc.Skin.JointMatrices, smc.Skin.JointCount);
+
+            var nrm = Matrix4x4.Invert(world, out var inv) ? Matrix4x4.Transpose(inv) : world;
+            shader.SetObject(world, nrm, smc.Material);
+            smc.Mesh.Draw();
+        }
     }
 
     // Camera-facing sprites, drawn after the meshes: depth-tested (so they hide behind geometry)
@@ -143,6 +182,9 @@ internal sealed class MeshRenderer : IDisposable
                 case MeshComponent mc:
                     _queue.Add((o.WorldMatrix, mc.Mesh, mc.Material));
                     break;
+                case SkinnedMeshComponent smc:
+                    _skinned.Add((o.WorldMatrix, smc));
+                    break;
                 case LightComponent lc when _lightCount < MeshShader.MaxLights:
                     _lights[_lightCount++] = ToGpu(lc, o.WorldMatrix);
                     break;
@@ -168,6 +210,8 @@ internal sealed class MeshRenderer : IDisposable
         _unlit.Dispose();
         _lit.Dispose();
         _pbr.Dispose();
+        _skinnedLit.Dispose();
+        _skinnedPbr.Dispose();
         _billboard.Dispose();
         _quad.Dispose();
     }

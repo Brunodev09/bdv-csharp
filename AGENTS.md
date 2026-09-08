@@ -250,6 +250,48 @@ code and let the file hold what you place around them.
 
 ---
 
+## Skinned animation (rigged `.glb`)
+
+Model → rig → animate in Blender → export `.glb` → it loads, deforms and plays. The loader reads
+`skins` (JOINTS_0 / WEIGHTS_0 / inverse bind matrices) and `animations`, builds the skeleton out of
+ordinary scene nodes, and attaches an `Animator` to the model root.
+
+```csharp
+var hero = w.Load("assets/hero.glb").At(0, 0, 0);
+var anim = hero.Object.GetComponent<Animator>()!;   // present when the .glb has clips
+
+anim.Play("Idle");                    // cut
+anim.CrossFade("Walk", 0.2f);         // blend over 0.2s — safe to call every frame
+anim.Play("Attack", loop: false);     // one-shot; anim.Finished goes true at the end
+anim.Speed = 1.5f;                    // negative plays backwards
+anim.Seek(0.5f);                      // pose a frame (scrubbing, headless captures)
+foreach (var name in anim.ClipNames) { }
+```
+
+Because joints are just `SimObject`s, everything else already works on them: parent a sword to a
+hand node, read a bone's world matrix for an IK target, or move a joint by hand.
+
+**Making a rig that works:**
+
+- **glTF only, never FBX.** Y-up, metres, apply transforms before export, one `.glb` per asset,
+  textures embedded.
+- **Max 64 joints per skin** (`Skin.MaxJoints`, matched by the shaders' `MAX_JOINTS`). Over that
+  the loader throws with a clear message rather than rendering garbage — split the mesh or raise
+  both together.
+- **Max 4 influences per vertex.** glTF's JOINTS_0/WEIGHTS_0 hold four; set your exporter's limit
+  to 4 or the extra ones are dropped silently by the exporter, not by us.
+- Weights need not sum to exactly 1 — the shader normalises. A vertex with *no* weights falls back
+  to identity rather than collapsing to the origin.
+
+**Not supported yet** (each fails loudly or degrades predictably, never silently): morph targets;
+CUBICSPLINE interpolation (parsed, then sampled as LINEAR); animation of anything but node
+translation/rotation/scale. There are no skeletal *shadows* either, because there are no shadows.
+
+To generate a rigged test asset without Blender:
+`python3 tools/make_test_rig.py sketches/assets/bendy.glb`
+
+---
+
 ## Prefabs (`.prefab.json`) — compose once, instance many
 
 A prefab is a **single node plus the materials it needs**, in the same schema as a scene node.

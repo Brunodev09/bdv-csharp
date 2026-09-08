@@ -42,7 +42,8 @@ void main() {
     v_uv = a_uv;
 }";
 
-    private const string Frag = @"#version 410 core
+    /// <summary>Shared with the skinned variant so lighting can't drift between them.</summary>
+    internal const string Frag = @"#version 410 core
 #define MAX_LIGHTS 8
 in vec3 v_normal; in vec2 v_uv; in vec3 v_fragPos;
 uniform vec4 u_color;

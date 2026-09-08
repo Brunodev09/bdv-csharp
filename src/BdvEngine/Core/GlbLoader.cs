@@ -10,8 +10,12 @@ namespace BdvEngine;
 /// → <see cref="SimObject"/> tree, indexed mesh primitives (POSITION / NORMAL / TEXCOORD_0), and
 /// <c>pbrMetallicRoughness</c> base-colour factor + embedded base-colour texture.
 ///
-/// NOT yet (add later behind the same call): skins, skeletal / morph animation, sparse accessors,
-/// external / data-URI buffers, and KHR extensions.
+/// v2 adds <b>skins and skeletal animation</b>: JOINTS_0 / WEIGHTS_0, inverse bind matrices, and
+/// <c>animations</c> (translation / rotation / scale channels, LINEAR + STEP). A model with clips
+/// gets an <see cref="Animator"/> on its root — <c>anim.Play("Walk")</c>.
+///
+/// NOT yet (add later behind the same call): morph targets, CUBICSPLINE interpolation (sampled as
+/// LINEAR), sparse accessors, external / data-URI buffers, and KHR extensions.
 /// </summary>
 public static class GlbLoader
 {
@@ -37,23 +41,15 @@ public static class GlbLoader
         var materials   = Arr(root, "materials");
         var textures    = Arr(root, "textures");
         var images      = Arr(root, "images");
+        var skinsJson   = Arr(root, "skins");
+        var animsJson   = Arr(root, "animations");
 
         // ── materials → registered engine material names ──
         var matNames = new string[materials.Length];
         for (int i = 0; i < materials.Length; i++)
             matNames[i] = BuildMaterial(modelName, i, materials[i], textures, images, bufferViews, bin);
 
-        // ── meshes → primitives (each an engine Mesh + material name) ──
-        var meshPrims = new List<(Mesh mesh, string mat)>[meshes.Length];
-        for (int m = 0; m < meshes.Length; m++)
-        {
-            var prims = new List<(Mesh, string)>();
-            foreach (var prim in Arr(meshes[m], "primitives"))
-                prims.Add(BuildPrimitive(prim, accessors, bufferViews, bin, matNames, modelName));
-            meshPrims[m] = prims;
-        }
-
-        // ── nodes → SimObjects ──
+        // ── nodes → SimObjects (transforms + hierarchy first; meshes need the skeleton) ──
         var sims = new SimObject[nodes.Length];
         for (int i = 0; i < nodes.Length; i++)
         {
@@ -61,15 +57,36 @@ public static class GlbLoader
             string name = nj.TryGetProperty("name", out var nm) ? nm.GetString() ?? $"node{i}" : $"node{i}";
             var so = new SimObject(nextId(), name);
             ApplyTransform(so.Transform, nj);
-            if (nj.TryGetProperty("mesh", out var mi))
-                foreach (var (mesh, mat) in meshPrims[mi.GetInt32()])
-                    so.AddComponent(new MeshComponent(mesh, mat));
             sims[i] = so;
         }
         for (int i = 0; i < nodes.Length; i++)
             if (nodes[i].TryGetProperty("children", out var ch))
                 foreach (var c in ch.EnumerateArray())
                     sims[i].AddChild(sims[c.GetInt32()]);
+
+        // ── skins → Skin objects over those nodes ──
+        var skins = new Skin[skinsJson.Length];
+        for (int i = 0; i < skinsJson.Length; i++)
+            skins[i] = BuildSkin(skinsJson[i], sims, accessors, bufferViews, bin);
+
+        // ── meshes → components, now that a node's skin (if any) is known ──
+        // A glTF mesh referenced from both a skinned and an unskinned node would need two vertex
+        // layouts, so primitives are built per node rather than cached per mesh.
+        for (int i = 0; i < nodes.Length; i++)
+        {
+            if (!nodes[i].TryGetProperty("mesh", out var mi)) continue;
+            Skin? skin = nodes[i].TryGetProperty("skin", out var si) && si.GetInt32() < skins.Length
+                ? skins[si.GetInt32()]
+                : null;
+
+            foreach (var prim in Arr(meshes[mi.GetInt32()], "primitives"))
+            {
+                var (mesh, mat) = BuildPrimitive(prim, accessors, bufferViews, bin, matNames, modelName,
+                                                 skinned: skin != null);
+                if (skin != null && mesh.IsSkinned) sims[i].AddComponent(new SkinnedMeshComponent(mesh, mat, skin));
+                else sims[i].AddComponent(new MeshComponent(mesh, mat));
+            }
+        }
 
         // ── scene root → one wrapper SimObject ──
         var wrapper = new SimObject(nextId(), modelName);
@@ -89,6 +106,18 @@ public static class GlbLoader
                     foreach (var c in ch.EnumerateArray()) isChild[c.GetInt32()] = true;
             for (int i = 0; i < nodes.Length; i++)
                 if (!isChild[i]) wrapper.AddChild(sims[i]);
+        }
+
+        // ── animations → an Animator on the model root ──
+        if (animsJson.Length > 0)
+        {
+            var animator = new Animator();
+            for (int i = 0; i < animsJson.Length; i++)
+            {
+                var clip = BuildClip(animsJson[i], i, sims, accessors, bufferViews, bin);
+                if (clip.Channels.Count > 0) animator.Add(clip);
+            }
+            if (animator.ClipNames.Count > 0) wrapper.AddComponent(animator);
         }
         return wrapper;
     }
@@ -131,7 +160,7 @@ public static class GlbLoader
     // ──────────────────────────────────────────────────────────── primitives
     private static (Mesh, string) BuildPrimitive(
         JsonElement prim, JsonElement[] accessors, JsonElement[] bufferViews, byte[] bin,
-        string[] matNames, string modelName)
+        string[] matNames, string modelName, bool skinned = false)
     {
         var attrs = prim.GetProperty("attributes");
         float[] pos  = ReadFloats(attrs.GetProperty("POSITION").GetInt32(), accessors, bufferViews, bin, 3);
@@ -139,16 +168,33 @@ public static class GlbLoader
         float[]? norm = attrs.TryGetProperty("NORMAL", out var n)     ? ReadFloats(n.GetInt32(), accessors, bufferViews, bin, 3) : null;
         float[]? uv   = attrs.TryGetProperty("TEXCOORD_0", out var t) ? ReadFloats(t.GetInt32(), accessors, bufferViews, bin, 2) : null;
 
-        var verts = new float[vcount * Mesh.FloatsPerVertex];
+        // A node can claim a skin while its primitive carries no joint data; fall back to a static
+        // mesh rather than emitting a skinned one whose weights are all zero.
+        float[]? joints = null, weights = null;
+        if (skinned && attrs.TryGetProperty("JOINTS_0", out var jEl) && attrs.TryGetProperty("WEIGHTS_0", out var wEl))
+        {
+            joints  = ReadAsFloats(jEl.GetInt32(), accessors, bufferViews, bin, 4);   // ubyte/ushort/float
+            weights = ReadAsFloats(wEl.GetInt32(), accessors, bufferViews, bin, 4);
+        }
+        bool isSkinned = joints != null && weights != null;
+
+        int stride = isSkinned ? Mesh.SkinnedFloatsPerVertex : Mesh.FloatsPerVertex;
+        var verts = new float[vcount * stride];
         for (int i = 0; i < vcount; i++)
         {
-            int o = i * 8;
+            int o = i * stride;
             verts[o + 0] = pos[i * 3 + 0]; verts[o + 1] = pos[i * 3 + 1]; verts[o + 2] = pos[i * 3 + 2];
             verts[o + 3] = norm != null ? norm[i * 3 + 0] : 0f;
             verts[o + 4] = norm != null ? norm[i * 3 + 1] : 1f;
             verts[o + 5] = norm != null ? norm[i * 3 + 2] : 0f;
             verts[o + 6] = uv != null ? uv[i * 2 + 0] : 0f;
             verts[o + 7] = uv != null ? uv[i * 2 + 1] : 0f;
+            if (!isSkinned) continue;
+            for (int c = 0; c < 4; c++)
+            {
+                verts[o + 8 + c]  = joints![i * 4 + c];
+                verts[o + 12 + c] = weights![i * 4 + c];
+            }
         }
 
         uint[] idx = prim.TryGetProperty("indices", out var ip)
@@ -160,9 +206,9 @@ public static class GlbLoader
         {
             var s = new ushort[idx.Length];
             for (int i = 0; i < idx.Length; i++) s[i] = (ushort)idx[i];
-            mesh = new Mesh(verts, s);
+            mesh = new Mesh(verts, s, isSkinned);
         }
-        else mesh = new Mesh(verts, idx);
+        else mesh = new Mesh(verts, idx, isSkinned);
 
         string mat;
         if (prim.TryGetProperty("material", out var mp)) mat = matNames[mp.GetInt32()];
@@ -175,6 +221,95 @@ public static class GlbLoader
         var a = new uint[n];
         for (int i = 0; i < n; i++) a[i] = (uint)i;
         return a;
+    }
+
+    // ──────────────────────────────────────────────────────────── skins + animation
+
+    private static Skin BuildSkin(
+        JsonElement skin, SimObject[] sims, JsonElement[] accessors, JsonElement[] bufferViews, byte[] bin)
+    {
+        var jointIdx = new List<int>();
+        foreach (var j in Arr(skin, "joints")) jointIdx.Add(j.GetInt32());
+
+        var joints = new SimObject[jointIdx.Count];
+        for (int i = 0; i < jointIdx.Count; i++) joints[i] = sims[jointIdx[i]];
+
+        // inverseBindMatrices is optional; absent means identity (joints already in model space).
+        var inv = new Matrix4x4[jointIdx.Count];
+        if (skin.TryGetProperty("inverseBindMatrices", out var ibm))
+        {
+            var f = ReadFloats(ibm.GetInt32(), accessors, bufferViews, bin, 16);
+            for (int i = 0; i < inv.Length && (i + 1) * 16 <= f.Length; i++)
+            {
+                int o = i * 16;
+                // Same convention as ApplyTransform: glTF's column-major floats read straight into
+                // System.Numerics' row-major fields give the row-vector form the engine uses.
+                inv[i] = new Matrix4x4(
+                    f[o + 0],  f[o + 1],  f[o + 2],  f[o + 3],
+                    f[o + 4],  f[o + 5],  f[o + 6],  f[o + 7],
+                    f[o + 8],  f[o + 9],  f[o + 10], f[o + 11],
+                    f[o + 12], f[o + 13], f[o + 14], f[o + 15]);
+            }
+        }
+        else for (int i = 0; i < inv.Length; i++) inv[i] = Matrix4x4.Identity;
+
+        return new Skin(joints, inv);
+    }
+
+    private static AnimationClip BuildClip(
+        JsonElement anim, int index, SimObject[] sims,
+        JsonElement[] accessors, JsonElement[] bufferViews, byte[] bin)
+    {
+        string name = anim.TryGetProperty("name", out var nm) ? nm.GetString() ?? $"clip{index}" : $"clip{index}";
+        var samplersJson = Arr(anim, "samplers");
+        var channels = new List<AnimationChannel>();
+
+        foreach (var ch in Arr(anim, "channels"))
+        {
+            if (!ch.TryGetProperty("target", out var target)) continue;
+            if (!target.TryGetProperty("node", out var nodeEl)) continue;      // no node = nothing to drive
+            if (!target.TryGetProperty("path", out var pathEl)) continue;
+
+            var path = pathEl.GetString() switch
+            {
+                "translation" => AnimationPath.Translation,
+                "rotation"    => AnimationPath.Rotation,
+                "scale"       => AnimationPath.Scale,
+                _             => (AnimationPath?)null,                          // "weights" = morph, not v2
+            };
+            if (path == null) continue;
+
+            int si = ch.GetProperty("sampler").GetInt32();
+            if (si >= samplersJson.Length) continue;
+            var sj = samplersJson[si];
+
+            var mode = sj.TryGetProperty("interpolation", out var ie) ? ie.GetString() switch
+            {
+                "STEP"        => Interpolation.Step,
+                "CUBICSPLINE" => Interpolation.CubicSpline,
+                _             => Interpolation.Linear,
+            } : Interpolation.Linear;
+
+            int comps = path == AnimationPath.Rotation ? 4 : 3;
+            float[] times = ReadFloats(sj.GetProperty("input").GetInt32(), accessors, bufferViews, bin, 1);
+            float[] values = ReadAsFloats(sj.GetProperty("output").GetInt32(), accessors, bufferViews, bin, comps);
+
+            // CUBICSPLINE stores in/value/out tangents per key; take the middle (the value) and
+            // sample it linearly. Visibly close for most clips, and honest about what it does.
+            if (mode == Interpolation.CubicSpline && values.Length == times.Length * comps * 3)
+            {
+                var mid = new float[times.Length * comps];
+                for (int k = 0; k < times.Length; k++)
+                    Array.Copy(values, k * comps * 3 + comps, mid, k * comps, comps);
+                values = mid;
+            }
+
+            int node = nodeEl.GetInt32();
+            if (node < 0 || node >= sims.Length) continue;
+            channels.Add(new AnimationChannel(sims[node], path.Value,
+                                              new AnimationSampler(times, values, comps, mode)));
+        }
+        return new AnimationClip(name, channels);
     }
 
     // ──────────────────────────────────────────────────────────── accessors
@@ -196,6 +331,51 @@ public static class GlbLoader
         for (int i = 0; i < count; i++)
             for (int c = 0; c < comps; c++)
                 outp[i * comps + c] = BitConverter.ToSingle(bin, baseOff + i * stride + c * 4);
+        return outp;
+    }
+
+    /// <summary>Read an accessor as floats, converting the integer component types glTF allows for
+    /// JOINTS_0 (ubyte/ushort) and normalised WEIGHTS_0. <see cref="ReadFloats"/> is the strict
+    /// float-only path used for positions and keyframe times.</summary>
+    private static float[] ReadAsFloats(int accessorIdx, JsonElement[] accessors, JsonElement[] bufferViews, byte[] bin, int comps)
+    {
+        var acc = accessors[accessorIdx];
+        int compType = acc.GetProperty("componentType").GetInt32();
+        if (compType == 5126) return ReadFloats(accessorIdx, accessors, bufferViews, bin, comps);
+
+        int count = acc.GetProperty("count").GetInt32();
+        bool normalized = acc.TryGetProperty("normalized", out var nz) && nz.GetBoolean();
+        int accOffset = acc.TryGetProperty("byteOffset", out var ao) ? ao.GetInt32() : 0;
+        var bv = bufferViews[acc.GetProperty("bufferView").GetInt32()];
+        int bvOffset = bv.TryGetProperty("byteOffset", out var bo) ? bo.GetInt32() : 0;
+
+        int size = compType switch
+        {
+            5120 => 1, 5121 => 1, 5122 => 2, 5123 => 2, 5125 => 4,
+            _ => throw new NotSupportedException($"glb: componentType {compType} not supported."),
+        };
+        int stride = bv.TryGetProperty("byteStride", out var bs) ? bs.GetInt32() : comps * size;
+        int baseOff = bvOffset + accOffset;
+
+        var outp = new float[count * comps];
+        for (int i = 0; i < count; i++)
+            for (int c = 0; c < comps; c++)
+            {
+                int p = baseOff + i * stride + c * size;
+                float v = compType switch
+                {
+                    5120 => (sbyte)bin[p],
+                    5121 => bin[p],
+                    5122 => BitConverter.ToInt16(bin, p),
+                    5123 => BitConverter.ToUInt16(bin, p),
+                    _    => BitConverter.ToUInt32(bin, p),
+                };
+                // Weights arrive normalised (0..1 packed into the integer range); joint INDICES
+                // never are, so only rescale when the accessor says so.
+                if (normalized)
+                    v /= compType switch { 5120 => 127f, 5121 => 255f, 5122 => 32767f, 5123 => 65535f, _ => 4294967295f };
+                outp[i * comps + c] = v;
+            }
         return outp;
     }
 
