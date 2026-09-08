@@ -17,6 +17,8 @@ public sealed class RayCastBehaviorData : IBehaviorData
 
 public sealed class RayCastBehaviorBuilder : IBehaviorBuilder
 {
+    public System.Type BehaviorType => typeof(RayCastBehavior);
+
     public string Type => "rayCast";
     public IBehavior BuildFromJson(JsonElement json)
     {

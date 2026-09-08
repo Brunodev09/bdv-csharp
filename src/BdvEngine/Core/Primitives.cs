@@ -18,6 +18,8 @@ public readonly struct MeshSpec
 /// </summary>
 public static class Primitives
 {
+    // The serialisable spec is stamped by the Mesh factories themselves (Mesh.Source), so these
+    // stay the thin wrappers they were.
     public static MeshSpec Cube() => new(Mesh.Cube());
     public static MeshSpec Sphere(int segments = 24, int rings = 16) => new(Mesh.Sphere(segments, rings));
     public static MeshSpec Plane(float size = 1f) => new(Mesh.Plane(size));

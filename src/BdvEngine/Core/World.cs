@@ -39,9 +39,43 @@ public sealed class World
     public ObjectHandle Load(string path)
     {
         var root = GlbLoader.Load(path, () => _nextId++);
+        root.Source = path;   // so SceneSerializer can write the node back as a model reference
         Scene.AddObject(root);
         return new ObjectHandle(root, null);
     }
+
+    /// <summary>Load a <c>.scene.json</c> into this world — the authored half of a level as data
+    /// (see <see cref="SceneSerializer"/>). The file's nodes land under a single container object
+    /// which is returned, so a reload is one child swapped rather than a whole-scene rebuild:
+    /// <code>
+    /// World.LoadScene("levels/forest.scene.json");   // in Init(), after the GL context exists
+    /// </code>
+    /// The file's <c>environment</c> and <c>materials</c> blocks are applied to this world.
+    /// Call from <see cref="Game.Init"/> or later; the container is loaded immediately so meshes
+    /// and textures upload even though the engine's one-shot <c>Scene.Load()</c> has passed.</summary>
+    public SimObject LoadScene(string path)
+    {
+        var container = SceneSerializer.Load(this, path, () => _nextId++);
+        Scene.AddObject(container);
+        container.Load();   // Engine calls Scene.Load() once, after Init — later subtrees load here.
+        return container;
+    }
+
+    /// <summary>Replace a previously loaded scene container with a fresh load of the same file —
+    /// the hot-reload swap. Returns the new container; the old one is detached.</summary>
+    public SimObject ReloadScene(string path, SimObject previous)
+    {
+        var fresh = SceneSerializer.Load(this, path, () => _nextId++);
+        Scene.RemoveObject(previous);
+        Scene.AddObject(fresh);
+        fresh.Load();
+        return fresh;
+    }
+
+    /// <summary>Write this world out as a <c>.scene.json</c>. With no <paramref name="root"/> the
+    /// whole world is saved — the "bake" path that turns generated content into an editable file.
+    /// Pass the container from <see cref="LoadScene"/> to save just that level back.</summary>
+    public void SaveScene(string path, SimObject? root = null) => SceneSerializer.Save(this, path, root);
 
     /// <summary>Raycast the scene and return the nearest object whose mesh bounds the ray hits
     /// (or null). Build the ray from a mouse pixel via <see cref="Camera.ScreenRay"/>. Pass

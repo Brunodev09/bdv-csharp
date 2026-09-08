@@ -30,6 +30,8 @@ public sealed class StatefulAnimationBehaviorData : IBehaviorData
 
 public sealed class StatefulAnimationBehaviorBuilder : IBehaviorBuilder
 {
+    public System.Type BehaviorType => typeof(StatefulAnimationBehavior);
+
     public string Type => "statefulAnimation";
     public IBehavior BuildFromJson(JsonElement json)
     {

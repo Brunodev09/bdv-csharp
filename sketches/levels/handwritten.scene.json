@@ -1,0 +1,51 @@
+// Written by hand from the AGENTS.md spec — no C# involved in placing any of this.
+{
+  "version": 1,
+  "environment": {
+    "sky": "#87A3C4",
+    "ambient": "#55555F",
+    "sun": { "direction": {"x":-0.4,"y":-1,"z":-0.3}, "color": "#FFF2D9" }
+  },
+  "materials": [
+    { "name": "grass",  "shading": "Lit",   "color": "#4E7A44" },
+    { "name": "bark",   "shading": "Lit",   "color": "#5A3F28" },
+    { "name": "canopy", "shading": "Lit",   "color": "#2F6134" },
+    { "name": "gold",   "shading": "Pbr",   "color": "#E0C25A", "metallic": 1, "roughness": 0.22 },
+    { "name": "marker", "shading": "Unlit", "color": "#E04A3C" },
+  ],
+  "nodes": [
+    { "name": "ground", "mesh": { "primitive": "plane", "size": 26 }, "material": "grass" },
+
+    // A tree, composed as a parent with two children — the prefab shape, before prefabs exist.
+    { "name": "pine_a", "position": {"x":-4,"y":0,"z":-2},
+      "mesh": { "primitive": "cube" }, "material": "bark",
+      "scale": {"x":0.4,"y":3,"z":0.4},
+      "children": [
+        { "name": "canopy_lo", "position": {"x":0,"y":0.62,"z":0}, "scale": {"x":5,"y":0.75,"z":5},
+          "mesh": { "primitive": "sphere", "segments": 16, "rings": 12 }, "material": "canopy" },
+        { "name": "canopy_hi", "position": {"x":0,"y":0.95,"z":0}, "scale": {"x":3.4,"y":0.5,"z":3.4},
+          "mesh": { "primitive": "sphere", "segments": 16, "rings": 12 }, "material": "canopy" }
+      ] },
+
+    { "name": "pine_b", "position": {"x":4.5,"y":0,"z":-3.5},
+      "mesh": { "primitive": "cube" }, "material": "bark",
+      "scale": {"x":0.34,"y":2.4,"z":0.34},
+      "children": [
+        { "name": "canopy_lo", "position": {"x":0,"y":0.66,"z":0}, "scale": {"x":5.5,"y":0.85,"z":5.5},
+          "mesh": { "primitive": "sphere", "segments": 16, "rings": 12 }, "material": "canopy" }
+      ] },
+
+    // A spinning PBR sphere — behavior driven from the file, no game code.
+    { "name": "idol", "position": {"x":0,"y":1.1,"z":0},
+      "mesh": { "primitive": "sphere", "segments": 28, "rings": 20 }, "material": "gold",
+      "behaviors": [
+        { "type": "rotation", "name": "spin", "rotation": {"x":0,"y":0.6,"z":0} }
+      ] },
+
+    { "name": "idol_marker", "position": {"x":0,"y":2.6,"z":0},
+      "billboard": { "material": "marker", "width": 1.1, "height": 0.16 } },
+
+    { "name": "warm_lamp", "position": {"x":3,"y":3,"z":3},
+      "light": { "type": "Point", "color": "#FFD9A0", "intensity": 7, "range": 16 } },
+  ]
+}

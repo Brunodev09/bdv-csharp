@@ -23,6 +23,8 @@ public sealed class PulseBehaviorData : IBehaviorData
 
 public sealed class PulseBehaviorBuilder : IBehaviorBuilder
 {
+    public System.Type BehaviorType => typeof(PulseBehavior);
+
     public string Type => "pulse";
     public IBehavior BuildFromJson(JsonElement json)
     {

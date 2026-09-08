@@ -24,6 +24,8 @@ public sealed class RotationBehaviorData : IBehaviorData
 
 public sealed class RotationBehaviorBuilder : IBehaviorBuilder
 {
+    public System.Type BehaviorType => typeof(RotationBehavior);
+
     public string Type => "rotation";
 
     public IBehavior BuildFromJson(JsonElement json)

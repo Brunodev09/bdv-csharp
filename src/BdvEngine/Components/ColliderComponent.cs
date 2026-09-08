@@ -32,6 +32,8 @@ public sealed class ColliderComponentData : IComponentData
 
 public sealed class ColliderComponentBuilder : IComponentBuilder
 {
+    public System.Type ComponentType => typeof(ColliderComponent);
+
     public string Type => "collider";
 
     public IComponent BuildFromJson(JsonElement json)

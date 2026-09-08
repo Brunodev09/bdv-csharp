@@ -32,6 +32,8 @@ public sealed class AnimatedSpriteComponentData : IComponentData
 
 public sealed class AnimatedSpriteComponentBuilder : IComponentBuilder
 {
+    public System.Type ComponentType => typeof(AnimatedSpriteComponent);
+
     public string Type => "animatedSprite";
 
     public IComponent BuildFromJson(JsonElement json)

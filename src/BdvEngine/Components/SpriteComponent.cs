@@ -16,6 +16,8 @@ public sealed class SpriteComponentData : IComponentData
 
 public sealed class SpriteComponentBuilder : IComponentBuilder
 {
+    public System.Type ComponentType => typeof(SpriteComponent);
+
     public string Type => "sprite";
 
     public IComponent BuildFromJson(JsonElement json)

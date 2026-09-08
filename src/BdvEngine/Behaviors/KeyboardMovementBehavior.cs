@@ -19,6 +19,8 @@ public sealed class KeyboardMovementBehaviorData : IBehaviorData
 
 public sealed class KeyboardMovementBehaviorBuilder : IBehaviorBuilder
 {
+    public System.Type BehaviorType => typeof(KeyboardMovementBehavior);
+
     public string Type => "keyboardMovement";
 
     public IBehavior BuildFromJson(JsonElement json)

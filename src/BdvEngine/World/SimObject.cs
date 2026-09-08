@@ -15,12 +15,21 @@ public sealed class SimObject
 
     public int Id { get; }
     public string Name { get; set; }
+
+    /// <summary>Asset this object's subtree was imported from (e.g. <c>"assets/hero.glb"</c>), set
+    /// by <see cref="World.Load"/>. <see cref="SceneSerializer"/> writes this out as the node's
+    /// <c>"model"</c> and re-imports on load instead of serialising the generated children — so a
+    /// scene file references models rather than inlining their geometry.</summary>
+    public string? Source { get; set; }
+
     public Transform Transform { get; } = new();
     public bool IsLoaded { get; private set; }
     public SimObject? Parent => _parent;
     public IReadOnlyList<SimObject> Children => _children;
     /// <summary>This object's components (read by the unified renderer to collect mesh draws).</summary>
     public IReadOnlyList<IComponent> Components => _components;
+    /// <summary>This object's behaviors — read by <see cref="SceneSerializer"/> and the inspector.</summary>
+    public IReadOnlyList<IBehavior> Behaviors => _behaviors;
     public Matrix4x4 LocalMatrix => _localMatrix;
     public Matrix4x4 WorldMatrix => _worldMatrix;
 

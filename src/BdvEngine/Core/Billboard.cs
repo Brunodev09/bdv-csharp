@@ -14,7 +14,7 @@ public sealed class BillboardComponent : BaseComponent
     public Vector3 Offset;   // world-space offset from the owner's position (e.g. float above head)
 
     public BillboardComponent(string materialName, float width, float height, Vector3 offset = default)
-        : base(new Data())
+        : base(new BillboardData())
     {
         Material = MaterialManager.Get(materialName);
         Width = width;
@@ -22,7 +22,7 @@ public sealed class BillboardComponent : BaseComponent
         Offset = offset;
     }
 
-    private sealed class Data : IComponentData
+    private sealed class BillboardData : IComponentData
     {
         public string Name { get; set; } = "billboard";
         public void SetFromJson(JsonElement json) { }

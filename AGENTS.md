@@ -178,6 +178,78 @@ Sketch.Run(
 
 ---
 
+## Scenes as data (`.scene.json`)
+
+A level can live in a **file** instead of in C#, so it can be tuned without recompiling and edited
+directly by you. Procedural content (terrain, scatter) stays in code; what goes in the file is the
+**placed, named, tuned** content.
+
+```csharp
+w.LoadScene("levels/forest.scene.json");     // in setup / Init — returns the container SimObject
+w.SaveScene("levels/forest.scene.json");     // bake the whole world out to a file
+w.SaveScene(path, container);                 // save just one loaded level back
+
+var level = new HotReloadableScene(w, path); // + file watcher: edits to the file reload it live
+level.Tick();                                 // call from update; level.Root is the container
+level.Save();                                 // write the live scene back
+```
+
+The format — every field optional, sensible defaults:
+
+```jsonc
+{
+  "version": 1,
+  "environment": { "sky": "#7089B5", "ambient": "#4C4C5B",
+                   "sun": { "direction": {"x":-0.5,"y":-1,"z":-0.35}, "color": "#F2EDDB" } },
+  "materials": [
+    { "name": "bark", "shading": "Lit", "color": "#4A3524" },          // Lit | Unlit | Pbr
+    { "name": "gold", "shading": "Pbr", "color": "#DCBE5A", "metallic": 1, "roughness": 0.25 },
+    { "name": "leaf", "shading": "Lit", "color": "#2F5A32", "texture": "assets/leaf.png",
+      "doubleSided": true }
+  ],
+  "nodes": [
+    { "name": "ground", "mesh": { "primitive": "plane", "size": 20 }, "material": "bark" },
+
+    { "name": "pine", "position": {"x":12,"y":0,"z":-8}, "scale": {"x":1,"y":1.4,"z":1},
+      "mesh": { "primitive": "cube" }, "material": "bark",
+      "behaviors": [ { "type": "rotation", "name": "spin", "rotation": {"x":0,"y":0.8,"z":0} } ],
+      "children": [
+        { "name": "canopy", "position": {"x":0,"y":3,"z":0},
+          "mesh": { "primitive": "sphere", "segments": 16, "rings": 12 }, "material": "leaf" }
+      ] },
+
+    { "name": "hero", "model": "assets/hero.glb", "position": {"x":0,"y":2,"z":0} },
+
+    { "name": "lamp", "position": {"x":3,"y":4,"z":2},
+      "light": { "type": "Point", "color": "#FFFFFF", "intensity": 8, "range": 14 } },
+
+    { "name": "hp", "position": {"x":0,"y":2.2,"z":0},
+      "billboard": { "material": "leaf", "width": 0.9, "height": 0.14 } }
+  ]
+}
+```
+
+**Rules that matter when you write one by hand:**
+
+- **Vectors** are `{"x":..,"y":..,"z":..}` (arrays `[x,y,z]` are also accepted on read).
+  **Colours** are `"#RRGGBB"` / `"#RRGGBBAA"`. Rotation is Euler radians; use `"quaternion"`
+  (`{x,y,z,w}`) instead for gimbal-free orientation.
+- **Every material a node references must be declared** in the `materials` block, or the node
+  loads without its mesh (and says so).
+- `"mesh"` primitives: `cube`, `sphere` (`segments`, `rings`), `plane` (`size`). Use `"model"`
+  for a `.glb` instead — its children are re-imported on load, not stored in the file.
+- `components` / `behaviors` go through the same builder registry as everything else, so `"type"`
+  is the registered name (`collider`, `sprite`, `rotation`, `rigidBody`, `keyboardMovement`, ...).
+- **Comments and trailing commas are allowed.** Unknown keys are ignored.
+- A malformed file **keeps the last-good scene** and prints the error — it never blanks the level.
+
+**What can't round-trip** (both are reported loudly, never silently wrong): a mesh assembled by
+hand from vertices rather than via `Mesh.Cube/Sphere/Plane` (e.g. `HeightmapTerrain`), and a
+texture generated at runtime rather than loaded from a file. Both are procedural — keep them in
+code and let the file hold what you place around them.
+
+---
+
 ## Notes / gotchas
 
 - **Working directory:** if your sketch loads files (`w.Load("x.glb")`, textures), paths are relative

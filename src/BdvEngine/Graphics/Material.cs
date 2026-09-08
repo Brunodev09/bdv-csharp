@@ -167,6 +167,17 @@ public static class MaterialManager
         _materials[material.Name] = new Node { Material = material, Count = 0 };
     }
 
+    /// <summary>Look up a material WITHOUT incrementing its reference count — for code that only
+    /// wants to inspect or update an existing material (the scene loader updating a colour on hot
+    /// reload, the inspector reading current values). <see cref="Get"/> is the "I am now using
+    /// this" call and does bump the count.</summary>
+    public static bool TryPeek(string name, out Material material)
+    {
+        if (_materials.TryGetValue(name, out var node)) { material = node.Material; return true; }
+        material = null!;
+        return false;
+    }
+
     public static Material Get(string name)
     {
         if (!_materials.TryGetValue(name, out var node))

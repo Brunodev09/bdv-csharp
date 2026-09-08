@@ -14,6 +14,13 @@ public sealed class Mesh : IDisposable
     /// <summary>Draw primitive — Triangles by default; Lines for helpers like a ground grid.</summary>
     public PrimitiveType Primitive { get; set; } = PrimitiveType.Triangles;
 
+    /// <summary>How this mesh was built, as a serialisable spec — e.g. <c>"cube"</c>,
+    /// <c>"sphere:24,16"</c>, <c>"plane:20"</c>. Set by the primitive factories below (so a game
+    /// calling <c>Mesh.Cube()</c> directly is serialisable too); null for meshes assembled by hand
+    /// from vertices or imported from a model (those serialise via the owner's model path instead). <see cref="SceneSerializer"/> uses it to write a mesh back out and to share one
+    /// GPU buffer across every node with the same spec.</summary>
+    public string? Source { get; set; }
+
     private readonly GL _gl = Gfx.Gl;
     private readonly float[] _vertexData;
     private readonly ushort[]? _indexData;
@@ -151,7 +158,7 @@ public sealed class Mesh : IDisposable
         Face(new[] {  0.5f, -0.5f,  0.5f }, new[] {  0.5f, -0.5f, -0.5f }, new[] {  0.5f,  0.5f, -0.5f }, new[] {  0.5f,  0.5f,  0.5f }, new[] { 1f, 0f, 0f });
         Face(new[] { -0.5f, -0.5f, -0.5f }, new[] { -0.5f, -0.5f,  0.5f }, new[] { -0.5f,  0.5f,  0.5f }, new[] { -0.5f,  0.5f, -0.5f }, new[] { -1f, 0f, 0f });
 
-        return new Mesh(v.ToArray(), idx.ToArray());
+        return new Mesh(v.ToArray(), idx.ToArray()) { Source = "cube" };
     }
 
     public static Mesh Plane(float size = 1f)
@@ -169,7 +176,7 @@ public sealed class Mesh : IDisposable
             -h, 0, -h,  0, -1, 0,  0, 1,
         };
         var idx = new ushort[] { 0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7 };
-        return new Mesh(v, idx);
+        return new Mesh(v, idx) { Source = $"plane:{size.ToString(System.Globalization.CultureInfo.InvariantCulture)}" };
     }
 
     public static Mesh Sphere(int segments = 16, int rings = 12)
@@ -202,6 +209,6 @@ public sealed class Mesh : IDisposable
             idx.Add((ushort)(a + 1)); idx.Add(b); idx.Add((ushort)(b + 1));
         }
 
-        return new Mesh(v.ToArray(), idx.ToArray());
+        return new Mesh(v.ToArray(), idx.ToArray()) { Source = $"sphere:{segments},{rings}" };
     }
 }

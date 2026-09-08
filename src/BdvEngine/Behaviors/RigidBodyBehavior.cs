@@ -26,6 +26,8 @@ public sealed class RigidBodyBehaviorData : IBehaviorData
 
 public sealed class RigidBodyBehaviorBuilder : IBehaviorBuilder
 {
+    public System.Type BehaviorType => typeof(RigidBodyBehavior);
+
     public string Type => "rigidBody";
 
     public IBehavior BuildFromJson(JsonElement json)
