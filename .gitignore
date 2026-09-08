@@ -7,3 +7,7 @@ obj/
 .vscode/
 *.swp
 .DS_Store
+
+# ColonySim is developed in this tree but is not part of this repo.
+src/Examples/ColonySim/
+src/Examples/ColonySim.AITests/
