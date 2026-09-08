@@ -65,6 +65,20 @@ Sketch.Run(
         lodObj.AddComponent(lod);
         w.Add(lodObj);
 
+        // a particle system: every field is a bridge-supported type (numbers, enums, Vector3,
+        // Color), so it round-trips through the generic `components` array with no bespoke path
+        var fxObj = new SimObject(9200, "sparks");
+        fxObj.Transform.Position = new Vector3(1.6f, 0.4f, 2.4f);
+        fxObj.AddComponent(new ParticleSystem3D
+        {
+            Shape = EmitterShape.Sphere, Radius = 0.4f,
+            EmissionRate = 35f, MaxParticles = 120,
+            Blend = ParticleBlend.Additive,
+            ColorStart = new Color(255, 210, 120, 255), ColorEnd = new Color(200, 60, 20, 0),
+            Gravity = new Vector3(0, -1.2f, 0), Drag = 0.4f, Seed = 7,
+        });
+        w.Add(fxObj);
+
         // light + billboard nodes
         w.AddPointLight(new Vector3(3, 3.5f, 2), Color.White, intensity: 6, range: 14);
         w.AddBillboard(new Vector3(0, 2.2f, 0), Color.Red, width: 0.9f, height: 0.14f);

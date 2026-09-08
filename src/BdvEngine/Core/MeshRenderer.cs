@@ -44,6 +44,7 @@ internal sealed class MeshRenderer : IDisposable
     private readonly List<(Matrix4x4 world, SkinnedMeshComponent smc)> _visibleSkinned = new();
     private readonly List<(Matrix4x4 world, Mesh mesh, Material mat)> _casters = new();
     private readonly BillboardShader _billboard = new();
+    private readonly ParticleRenderer _particles = new();
     private readonly Mesh _quad = UnitQuad();
 
     private readonly List<(Matrix4x4 world, Mesh mesh, Material mat)> _queue = new();
@@ -53,6 +54,8 @@ internal sealed class MeshRenderer : IDisposable
     private int _frame;
     private readonly Dictionary<MeshShader, List<(Matrix4x4 world, Mesh mesh, Material mat)>> _groups = new();
     private readonly List<(Vector3 anchor, BillboardComponent bb)> _billboards = new();
+    private readonly List<(ParticleSystem3D ps, float depth)> _particleSystems = new();
+    private readonly List<ParticleSystem3D> _particleDraw = new();
     private readonly GpuLight[] _lights = new GpuLight[MeshShader.MaxLights];
     private int _lightCount;
 
@@ -88,6 +91,7 @@ internal sealed class MeshRenderer : IDisposable
         _transparent.Clear();
         _casters.Clear();
         _billboards.Clear();
+        _particleSystems.Clear();
 
         // Light 0 is always the environment sun (keeps day/night etc. working).
         _lightCount = 0;
@@ -160,7 +164,40 @@ internal sealed class MeshRenderer : IDisposable
 
         DrawSkinned(frame);
         DrawTransparent(frame);
+        DrawParticles(frame, cam, camFrustum);
         DrawBillboards(frame, cam);
+    }
+
+    /// <summary>
+    /// Particle systems, after every solid and transparent surface so they composite over the
+    /// scene, and before billboards so a health bar still reads through smoke.
+    ///
+    /// <para>Systems are culled against the camera frustum by their live-particle bounds and sorted
+    /// far-to-near against each other. Sorting WITHIN a system is the system's own job — it depends
+    /// on the blend mode, and only alpha needs it.</para>
+    /// </summary>
+    private void DrawParticles(in FrameParams frame, Camera cam, in Frustum camFrustum)
+    {
+        if (_particleSystems.Count == 0) return;
+
+        _particleDraw.Clear();
+        foreach (var (ps, _) in _particleSystems)
+        {
+            if (ps.LiveCount == 0) continue;
+            if (_cullingEnabled && !camFrustum.Intersects(ps.WorldBounds)) continue;
+            _particleDraw.Add(ps);
+        }
+        if (_particleDraw.Count == 0) return;
+
+        _particleDraw.Sort((a, b) =>
+            Vector3.DistanceSquared(cam.Position, b.WorldBounds.Center)
+                .CompareTo(Vector3.DistanceSquared(cam.Position, a.WorldBounds.Center)));
+
+        var fwd = Vector3.Normalize(cam.Target - cam.Position);
+        var right = Vector3.Normalize(Vector3.Cross(fwd, cam.Up));
+        var up = Vector3.Cross(right, fwd);
+
+        _particles.Draw(_particleDraw, frame.Proj, frame.View, cam.Position, right, up);
     }
 
     /// <summary>Fullscreen gradient sky. Depth test and write are off — it fills every pixel and
@@ -523,6 +560,9 @@ internal sealed class MeshRenderer : IDisposable
                 case LightComponent lc when _lightCount < MeshShader.MaxLights:
                     _lights[_lightCount++] = ToGpu(lc, o.WorldMatrix);
                     break;
+                case ParticleSystem3D ps:
+                    _particleSystems.Add((ps, 0f));
+                    break;
                 case BillboardComponent bb:
                     _billboards.Add((o.WorldMatrix.Translation + bb.Offset, bb));
                     break;
@@ -570,6 +610,7 @@ internal sealed class MeshRenderer : IDisposable
         if (_instanceVbo != 0) _gl.DeleteBuffer(_instanceVbo);
         _shadowMap?.Dispose();
         _billboard.Dispose();
+        _particles.Dispose();
         _quad.Dispose();
     }
 }

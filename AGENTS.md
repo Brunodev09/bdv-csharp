@@ -395,6 +395,72 @@ always has a face pointing at you from either side.
 
 ---
 
+## 3D particles
+
+Camera-facing quads, simulated on the CPU, drawn in **one instanced call per system** however many
+particles are alive. Attach a `ParticleSystem3D` to any `SimObject`.
+
+```csharp
+var fire = new SimObject(w.NextId(), "campfire");
+fire.Transform.Position = new Vector3(0, 0.25f, 0);
+fire.AddComponent(new ParticleSystem3D
+{
+    Shape        = EmitterShape.Cone, ConeAngle = 16f, Radius = 0.22f,
+    EmissionRate = 90f, MaxParticles = 300,
+    SpeedMin     = 0.7f, SpeedMax = 1.5f,
+    LifetimeMin  = 0.5f, LifetimeMax = 0.9f,
+    SizeStart    = 0.34f, SizeEnd = 0.06f,
+    ColorStart   = new Color(255, 198, 92), ColorEnd = new Color(190, 40, 10, 0),
+    Gravity      = new Vector3(0, 0.9f, 0),      // fire RISES: buoyancy is negative gravity
+    Blend        = ParticleBlend.Additive,
+});
+w.Add(fire);
+
+ps.Burst(80);       // explosions, impacts, pickups — ignores EmissionRate
+ps.Emitting = false; // turn the tap off; live particles still finish their lives
+ps.Restart();        // fresh RNG, so a replayed effect matches the first run exactly
+ps.LiveCount;        // what a stats overlay or a test asserts on
+```
+
+**Shapes**: `Point`, `Sphere` (`Radius`), `Cone` (`Radius`, `ConeAngle`, `Direction`), `Box`
+(`BoxSize`). Cone is the default because most effects are cones.
+
+**Blend**: `Alpha` for anything that blocks light (smoke, dust, debris); `Additive` for anything
+that emits it (fire, sparks, magic). Additive overlaps brighten into a hot core, and black is
+invisible — that difference is most of what makes fire read as fire.
+
+**The knobs that matter most:**
+
+- `Gravity` is world-space acceleration — **negative Y falls, positive Y rises.** Smoke and fire
+  are positive.
+- `SizeStart` → `SizeEnd` and `ColorStart` → `ColorEnd` interpolate over each particle's life. Put
+  alpha 0 in `ColorEnd` or the effect pops out of existence instead of fading.
+- `Drag` bleeds off velocity; ~0.7 reads as air for smoke.
+- `WorldSpace = true` (default) leaves a trail behind a moving emitter. `false` makes particles ride
+  along with it — a shield shimmer, not exhaust.
+- `Texture = ""` uses a soft round dot generated in code, so a system works with **no art at all**.
+- `Seed` makes a system deterministic.
+
+**Cost.** One draw call per system, one 10-float record per live particle, and no per-particle mesh
+(the quad comes from `gl_VertexID`). The gate renders 265 particles across 4 systems in 8 draw
+calls total. Systems outside the camera frustum are culled but keep simulating, so they're in place
+when they come back into view.
+
+**Ordering.** Systems draw after all opaque and transparent geometry, depth-tested but not
+depth-writing, and sorted far-to-near against each other. Within a system, `Alpha` sorts its own
+particles back-to-front each frame; `Additive` skips it, because addition is commutative.
+
+**Not covered**: particle collision, sub-emitters, GPU simulation, and soft (depth-faded)
+particles — a quad intersecting the ground shows a hard edge. Trails want a ribbon primitive, not
+this.
+
+Particle systems **serialise into `.scene.json`** through the generic `components` array
+(`"type": "particles3d"`), so an effect tuned in the F1 inspector saves out and comes back as tuned.
+
+Gate: `python3 tools/check_particles.py`
+
+---
+
 ## Sky and fog
 
 Both **off by default** — turning the sky on replaces `Environment.Sky` as the background, and fog
