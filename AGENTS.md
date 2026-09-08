@@ -523,6 +523,51 @@ GameObjects, and it is the single easiest way to get a prefab wrong.
 
 ---
 
+## Material palettes and tunables
+
+Two ways to stop a recompile: a shared `materials.json`, and `[Tunable]` static fields.
+
+```csharp
+MaterialLibrary.Load("materials.json");                     // register or RETUNE in place
+MaterialLibrary.Save("materials.json", new[]{ "bark", "leaf" });
+var live = new HotReloadableMaterials("materials.json");    // + file watcher
+live.Tick();                                                 // from Update
+```
+
+Scene files already carry the materials they use, which keeps them self-contained. A **library** is
+for the other case: a palette shared by several scenes, where retuning `bark` should change it
+everywhere. Same JSON shape, so a block moves between the two by copy-paste, and a bare
+`[ ... ]` array works too.
+
+Loading **updates in place** rather than replacing, so every mesh already holding a material picks
+up the change — that's what makes hot reload work at all.
+
+```csharp
+static class Config
+{
+    [Tunable(0f, 240f, Group = "World")]  public static float DayLength = 120f;
+    [Tunable(1f, 30f,  Group = "Player")] public static float WalkSpeed = 8f;
+    [Tunable(Group = "Player")]           public static bool  CanSprint = true;
+}
+
+Tunables.RegisterAll(typeof(MyGame).Assembly);   // once, at startup
+Tunables.Load("tuning.json");                    // apply saved values
+// ...they now appear in the editor's Tunables panel, grouped, with sliders.
+```
+
+**The field must be `static`, and cannot be `const` or `readonly`.** A const is substituted into
+every call site at compile time, so there is no storage left to change; the registry rejects it
+with a message rather than appearing to work. `static` is the fix.
+
+Per-object values don't belong here — put them on a component and the inspector picks them up for
+free. `[Tunable]` is for the loose constants that aren't attached to anything: day length, sea
+level, walk speed, spawn density.
+
+A **partial `tuning.json` is fine** — missing keys keep their code defaults, so adding a new knob
+doesn't require updating the file first.
+
+---
+
 ## The in-game editor (F1)
 
 Every game built on the engine hosts a scene editor — press **F1**. It is a mode, not a separate

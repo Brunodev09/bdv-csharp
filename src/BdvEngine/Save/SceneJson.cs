@@ -182,9 +182,16 @@ internal static class SceneJson
         foreach (var f in FieldsOf(target.GetType()))
         {
             if (!json.TryGetProperty(CamelCase(f.Name), out var el)) continue;
-            var v = ReadValue(el, f.FieldType, f.GetValue(target));
-            if (v != null) f.SetValue(target, v);
+            ApplyField(f, target, el);
         }
+    }
+
+    /// <summary>Apply one JSON value to one field. <paramref name="target"/> is null for a STATIC
+    /// field, which is what the tunables registry uses.</summary>
+    public static void ApplyField(FieldInfo f, object? target, JsonElement el)
+    {
+        var v = ReadValue(el, f.FieldType, f.GetValue(target));
+        if (v != null) f.SetValue(target, v);
     }
 
     public static void WriteValue(Utf8JsonWriter w, string name, object? value)

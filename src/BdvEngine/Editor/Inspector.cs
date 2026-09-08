@@ -51,10 +51,18 @@ public static class Inspector
         return changed;
     }
 
-    private static bool DrawField(object target, FieldInfo f, string idScope)
+    /// <summary>Draw one field's widget. <paramref name="target"/> is null for a STATIC field
+    /// (the tunables panel); <paramref name="labelOverride"/> replaces the field name, and
+    /// <paramref name="rangeOverride"/> supplies bounds from somewhere other than [Range].</summary>
+    public static bool DrawValue(object? target, FieldInfo f, string idScope,
+                                 string? labelOverride = null, RangeAttribute? rangeOverride = null)
+        => DrawField(target, f, idScope, labelOverride, rangeOverride);
+
+    private static bool DrawField(object? target, FieldInfo f, string idScope,
+                                  string? labelOverride = null, RangeAttribute? rangeOverride = null)
     {
-        string label = $"{Pretty(f.Name)}##{idScope}.{f.Name}";
-        var range = f.GetCustomAttribute<RangeAttribute>();
+        string label = $"{labelOverride ?? Pretty(f.Name)}##{idScope}.{f.Name}";
+        var range = rangeOverride ?? f.GetCustomAttribute<RangeAttribute>();
         object? cur = f.GetValue(target);
 
         switch (cur)

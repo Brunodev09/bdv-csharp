@@ -122,6 +122,9 @@ public static class SceneSerializer
         w.WriteEndObject();
     }
 
+    internal static void WriteMaterialJson(Utf8JsonWriter w, Material m) => WriteMaterial(w, m);
+    internal static void ReadMaterialJson(JsonElement e) => ReadMaterial(e);
+
     private static void WriteMaterial(Utf8JsonWriter w, Material m)
     {
         w.WriteStartObject();

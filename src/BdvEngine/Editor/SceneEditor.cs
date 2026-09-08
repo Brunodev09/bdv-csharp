@@ -95,6 +95,8 @@ public sealed class SceneEditor
     private double _statusUntil;
     private bool _showEnvironment = true;
     private string _prefabPath = "prefabs/new.prefab.json";
+    private string _tuningPath = "tuning.json";
+    private string _materialsPath = "materials.json";
 
     /// <summary>Call once per frame from the engine's ImGui pass. Safe to call every frame whether
     /// or not the editor is showing — it handles its own F1 toggle.</summary>
@@ -125,6 +127,7 @@ public sealed class SceneEditor
 
         DrawHierarchy(world, vh);
         DrawInspector(world, vw, vh);
+        DrawTunables(vw, vh);
         DrawGizmo(world, vw, vh);
 
         _lastMouse = mouse;
@@ -283,8 +286,37 @@ public sealed class SceneEditor
         ImGui.SameLine();
         ImGui.TextDisabled($"{CountNodes(world.Scene.Root) - 1} nodes");
 
+        ImGui.SetNextItemWidth(-96);
+        ImGui.InputTextWithHint("##matpath", "materials.json", ref _materialsPath, 260);
+        ImGui.SameLine();
+        if (ImGui.Button("Save##mats"))
+        {
+            // Everything the loaded scene references — the palette that scene actually uses.
+            var names = new List<string>();
+            CollectMaterialNames(world.Scene.Root, names);
+            try { MaterialLibrary.Save(_materialsPath, names); Status($"Saved {_materialsPath}"); }
+            catch (Exception e) { Status($"Save failed: {e.Message}"); }
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Load##mats"))
+        {
+            try { MaterialLibrary.Load(_materialsPath); Status($"Loaded {_materialsPath}"); }
+            catch (Exception e) { Status($"Load failed: {e.Message}"); }
+        }
+
         if (_status.Length > 0 && Time.Total < _statusUntil)
             ImGui.TextColored(new Vector4(0.55f, 0.85f, 1f, 1f), _status);
+    }
+
+    private static void CollectMaterialNames(SimObject o, List<string> into)
+    {
+        foreach (var c in o.Components)
+        {
+            if (c is MeshComponent mc) into.Add(mc.Material.Name);
+            else if (c is SkinnedMeshComponent smc) into.Add(smc.Material.Name);
+            else if (c is BillboardComponent bc) into.Add(bc.Material.Name);
+        }
+        foreach (var ch in o.Children) CollectMaterialNames(ch, into);
     }
 
     private static int CountNodes(SimObject o)
@@ -333,12 +365,72 @@ public sealed class SceneEditor
         return $"{icon} {o.Name}";
     }
 
+    // ── tunables ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The loose constants that aren't per-object — day length, sea level, walk speed. Registered
+    /// via <see cref="TunableAttribute"/> and persisted to <c>tuning.json</c>.
+    ///
+    /// <para>Only shown when something is registered, so a game that doesn't use tunables never
+    /// sees an empty panel.</para>
+    /// </summary>
+    private void DrawTunables(int vw, int vh)
+    {
+        if (Tunables.All.Count == 0) return;
+
+        float top = Math.Min(vh - 300, 560) + 16;
+        ImGui.SetNextWindowPos(new Vector2(vw - 348, top), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new Vector2(340, Math.Max(vh - top - 12, 140)), ImGuiCond.FirstUseEver);
+        ImGui.Begin("Tunables##bdv_editor", ImGuiWindowFlags.NoSavedSettings);
+
+        ImGui.SetNextItemWidth(-96);
+        ImGui.InputTextWithHint("##tuningpath", "tuning.json", ref _tuningPath, 260);
+        ImGui.SameLine();
+        if (ImGui.Button("Save##tuning"))
+        {
+            try { Tunables.Save(_tuningPath); Status($"Saved {_tuningPath}"); }
+            catch (Exception e) { Status($"Save failed: {e.Message}"); }
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Load##tuning"))
+        {
+            Tunables.Load(_tuningPath);
+            Status($"Loaded {_tuningPath}");
+        }
+
+        ImGui.Separator();
+
+        // Grouped by the attribute's Group (defaulting to the declaring type), so a big game's
+        // knobs stay navigable instead of being one flat list of eighty sliders.
+        string? current = null;
+        bool open = false;
+        foreach (var t in Tunables.All.OrderBy(t => t.Group, StringComparer.Ordinal)
+                                      .ThenBy(t => t.Field.Name, StringComparer.Ordinal))
+        {
+            if (t.Group != current)
+            {
+                current = t.Group;
+                open = ImGui.CollapsingHeader(current, ImGuiTreeNodeFlags.DefaultOpen);
+            }
+            if (!open) continue;
+
+            var range = t.Attribute.HasRange
+                ? new RangeAttribute(t.Attribute.Min, t.Attribute.Max)
+                : null;
+            Inspector.DrawValue(null, t.Field, "tunable", Inspector.Pretty(t.Field.Name), range);
+        }
+
+        ImGui.End();
+    }
+
     // ── inspector ────────────────────────────────────────────────────────────
 
     private void DrawInspector(World world, int vw, int vh)
     {
+        // Height leaves room for the Tunables panel below; both are movable, this is just a sane
+        // starting layout rather than a constraint.
         ImGui.SetNextWindowPos(new Vector2(vw - 348, 8), ImGuiCond.FirstUseEver);
-        ImGui.SetNextWindowSize(new Vector2(340, Math.Min(vh - 16, 620)), ImGuiCond.FirstUseEver);
+        ImGui.SetNextWindowSize(new Vector2(340, Math.Min(vh - 300, 560)), ImGuiCond.FirstUseEver);
         ImGui.Begin("Inspector##bdv_editor", ImGuiWindowFlags.NoSavedSettings);
 
         DrawEnvironment(world);

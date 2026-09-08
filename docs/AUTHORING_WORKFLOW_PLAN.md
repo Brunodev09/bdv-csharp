@@ -1,7 +1,6 @@
 # Authoring Workflow Plan — "Why Unity is easier, and how we get there"
 
-**Status:** Phases 1–3 landed (see §6), and all three §9 blockers are closed (skinned
-animation, shadows, 3D collision). Phase 4 is draft.
+**Status:** COMPLETE. Phases 1–4 landed (see §6), and every §9 gap is closed.
 **Follows:** `UNIFIED_3D_PLAN.md` (Phases 0–8, landed).
 **Goal:** Close the gap between "BdvEngine can render a 3D scene" and "BdvEngine is a nicer
 place to *build* a 3D game than Unity" — for a solo author working with an AI agent.
@@ -415,17 +414,28 @@ scale discards that squash and the children, authored against it, come out disto
 exactly why Unity prefab roots are empty GameObjects. Now documented in `AGENTS.md`, and the
 easiest way to get a prefab wrong.
 
-### Phase 4 — Everything else becomes data
+### Phase 4 — Everything else becomes data — ✅ LANDED
 
-Once Phases 1–2 exist, the pattern generalises for near-zero marginal cost:
+- **`Save/MaterialLibrary.cs`** — a standalone `materials.json` palette, plus
+  `HotReloadableMaterials`. Loading UPDATES materials in place rather than replacing them, which is
+  what makes hot reload work: swapping in a new `Material` object would leave every existing
+  `MeshComponent` pointing at the old one. Accepts the wrapped form and a bare array, so a
+  `materials` block lifted out of a scene file works as a library unedited.
+- **`Save/Tunables.cs`** — `[Tunable]` on a static field registers it, puts it in the editor's
+  Tunables panel (grouped, with optional slider bounds) and persists it to `tuning.json`. A
+  partial file is fine: missing keys keep their code defaults, so adding a knob doesn't require
+  updating the file first.
 
-- **`materials.json`** — hot-reloaded, so retuning a colour stops being a recompile.
-- **A `[Tunable]` static registry** — mark any static config field, get it in the inspector and
-  persisted to a `tuning.json`. Covers the game-logic constants that aren't per-object
-  (`DayLength`, `WaterLevel`, movement speeds).
-- **`AGENTS.md` update** — document the scene format so I can author levels directly. This is
-  the step that converts the whole plan into leverage on *our* workflow specifically; without it
-  the format exists but I won't reliably use it.
+  `const` and `readonly` are **rejected with a clear message**, not silently ignored — a const is
+  substituted into every call site at compile time, so there is no storage to change at runtime.
+  That constraint is inherent, and saying so is better than appearing to work.
+- **`AGENTS.md`** was updated continuously through Phases 1–4 rather than as a final step, so the
+  scene format, prefabs, the editor, skinning, shadows, collision, culling, sky/fog, transparency
+  and now palettes and tunables are all documented for direct use.
+
+  Verified by `sketches/tunables_test.cs`: eight checks covering registration, the three rejection
+  cases, save/load round-trip, partial-file behaviour, and — the one that matters — that editing
+  `materials.json` retunes the **same live `Material` instance** the scene is already holding.
 
 ---
 
