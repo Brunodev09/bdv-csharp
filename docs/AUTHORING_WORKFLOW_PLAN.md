@@ -627,9 +627,11 @@ Verified by `tools/check_lod.py`: 496k → 104k vertices (79% fewer) across a 18
 0.18% of the frame changed, and **zero change in the near half** — which is the assertion that
 matters, since a whole-frame average would hide an over-aggressive threshold.
 
-Not applied to the Valheim trees yet: those canopies come from prefab instances, and swapping their
-`MeshComponent` for a `LodComponent` needs either LOD in the scene format or a
-`SimObject.RemoveComponent`, neither of which exists.
+**Follow-up landed:** LOD is now part of the scene format — a `"lod"` block with per-level mesh
+spec, material and distance — so it round-trips byte-identically, can be hand-authored, and works
+through prefabs. Valheim's pine prefab uses it, which gives all 97 trees LOD from the one file.
+`World.Pick` resolves LOD objects against level 0 (largest bounds, so a click can't miss), and the
+editor shows which level an object is currently on.
 
 ### Explicitly not doing
 

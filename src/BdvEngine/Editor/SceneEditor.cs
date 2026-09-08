@@ -315,6 +315,8 @@ public sealed class SceneEditor
             if (c is MeshComponent mc) into.Add(mc.Material.Name);
             else if (c is SkinnedMeshComponent smc) into.Add(smc.Material.Name);
             else if (c is BillboardComponent bc) into.Add(bc.Material.Name);
+            else if (c is LodComponent lod)
+                foreach (var lv in lod.Levels) into.Add(lv.Material.Name);
         }
         foreach (var ch in o.Children) CollectMaterialNames(ch, into);
     }
@@ -356,6 +358,7 @@ public sealed class SceneEditor
             {
                 LightComponent => "*",
                 BillboardComponent => "=",
+                LodComponent => "%",
                 MeshComponent => "#",
                 _ => icon,
             };
@@ -462,6 +465,7 @@ public sealed class SceneEditor
 
     private static string MemberKind(IComponent c) => c switch
     {
+        LodComponent => "lod",
         MeshComponent => "mesh",
         LightComponent => "light",
         BillboardComponent => "billboard",
@@ -576,6 +580,22 @@ public sealed class SceneEditor
                     DrawMaterial(mc.Material);
                     break;
 
+                case LodComponent lod:
+                {
+                    ImGui.TextDisabled(lod.CurrentLevel < 0
+                        ? "culled (beyond cull distance)"
+                        : $"showing level {lod.CurrentLevel} of {lod.Levels.Count}");
+                    float cull = lod.CullDistance, hyst = lod.Hysteresis;
+                    if (ImGui.DragFloat("Cull distance", ref cull, 1f)) lod.CullDistance = MathF.Max(cull, 0f);
+                    if (ImGui.SliderFloat("Hysteresis", ref hyst, 0f, 0.5f)) lod.Hysteresis = hyst;
+                    for (int i = 0; i < lod.Levels.Count; i++)
+                    {
+                        var lv = lod.Levels[i];
+                        ImGui.TextDisabled($"  {i}: {lv.Mesh.Source ?? "(code mesh)"}  {lv.Material.Name}  within {lv.Within:F0}");
+                    }
+                    ImGui.TextDisabled("Distances are per unit of object scale.");
+                    break;
+                }
                 case BillboardComponent bc:
                     ImGui.DragFloat("Width", ref bc.Width, 0.01f);
                     ImGui.DragFloat("Height", ref bc.Height, 0.01f);

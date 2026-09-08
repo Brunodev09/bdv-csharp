@@ -31,7 +31,10 @@ namespace BdvEngine;
 ///     { "name": "hero",  "model": "assets/hero.glb", "position": {"x":0,"y":2,"z":0} },
 ///     { "name": "pine_7", "prefab": "prefabs/pine.prefab.json", "position": {"x":15,"y":0,"z":-3} },
 ///     { "name": "lamp",  "position": {"x":3,"y":4,"z":2},
-///       "light": { "type": "Point", "color": "#FFFFFF", "intensity": 8, "range": 14 } }
+///       "light": { "type": "Point", "color": "#FFFFFF", "intensity": 8, "range": 14 } },
+///     { "name": "canopy", "lod": { "cullDistance": 200, "levels": [
+///         { "mesh": {"primitive":"sphere","segments":24,"rings":16}, "material":"leaf", "within":25 },
+///         { "mesh": {"primitive":"sphere","segments":5,"rings":4},   "material":"leaf", "within":150 } ] } }
 ///   ]
 /// }
 /// </code>
@@ -103,6 +106,8 @@ public static class SceneSerializer
         {
             if (c is MeshComponent mc) into[mc.Material.Name] = mc.Material;
             else if (c is BillboardComponent bc) into[bc.Material.Name] = bc.Material;
+            else if (c is LodComponent lod)
+                foreach (var lv in lod.Levels) into[lv.Material.Name] = lv.Material;
         }
         // A model node's children are regenerated from the .glb on load, so their materials
         // come back with them and don't belong in the scene file.
@@ -183,6 +188,9 @@ public static class SceneSerializer
                     else SceneJson.WriteVec3(w, "direction", lc.Direction);
                     w.WriteEndObject();
                     break;
+                case LodComponent lod:
+                    WriteLod(w, lod, o.Name);
+                    break;
                 case BillboardComponent bc:
                     w.WriteStartObject("billboard");
                     w.WriteString("material", bc.Material.Name);
@@ -203,6 +211,26 @@ public static class SceneSerializer
             w.WriteEndArray();
         }
 
+        w.WriteEndObject();
+    }
+
+    /// <summary>Detail levels, nearest first. Each carries its own mesh spec and material, so a
+    /// far level can be a different material entirely (a flat impostor, say) rather than only a
+    /// coarser mesh.</summary>
+    private static void WriteLod(Utf8JsonWriter w, LodComponent lod, string node)
+    {
+        w.WriteStartObject("lod");
+        if (lod.CullDistance > 0f) w.WriteNumber("cullDistance", lod.CullDistance);
+        w.WriteNumber("hysteresis", lod.Hysteresis);
+        w.WriteStartArray("levels");
+        foreach (var lv in lod.Levels)
+        {
+            w.WriteStartObject();
+            if (WriteMeshSpec(w, lv.Mesh, node, "mesh")) w.WriteString("material", lv.Material.Name);
+            w.WriteNumber("within", lv.Within);
+            w.WriteEndObject();
+        }
+        w.WriteEndArray();
         w.WriteEndObject();
     }
 
@@ -237,6 +265,7 @@ public static class SceneSerializer
         // Warn once per type about anything we'd silently drop, rather than losing it quietly.
         foreach (var c in o.Components)
             if (c is not MeshComponent && c is not LightComponent && c is not BillboardComponent
+                && c is not LodComponent && c is not SkinnedMeshComponent
                 && !ComponentManager.TryGetTypeName(c, out _))
                 WarnUnserialisable(c.GetType(), "component");
         foreach (var b in o.Behaviors)
@@ -399,6 +428,8 @@ public static class SceneSerializer
         {
             if (c is MeshComponent mc) into[mc.Material.Name] = mc.Material;
             else if (c is BillboardComponent bc) into[bc.Material.Name] = bc.Material;
+            else if (c is LodComponent lod)
+                foreach (var lv in lod.Levels) into[lv.Material.Name] = lv.Material;
         }
         foreach (var ch in o.Children) CollectMaterialsDeep(ch, into);
     }
@@ -520,6 +551,7 @@ public static class SceneSerializer
                 Console.Error.WriteLine($"[scene] node '{name}': material '{material}' not declared; mesh skipped.");
         }
 
+        if (e.TryGetProperty("lod", out var lodEl)) ReadLod(lodEl, obj, name);
         if (e.TryGetProperty("light", out var lightEl)) ReadLight(lightEl, obj);
         if (e.TryGetProperty("billboard", out var bbEl)) ReadBillboard(bbEl, obj, name);
 
@@ -572,6 +604,38 @@ public static class SceneSerializer
         else if (e.TryGetProperty("rotation", out var r)) t.Rotation = SceneJson.ParseVec3(r, t.Rotation);
     }
 
+    private static void ReadLod(JsonElement e, SimObject obj, string node)
+    {
+        var lod = new LodComponent();
+        if (e.TryGetProperty("cullDistance", out var cd)) lod.CullDistance = cd.GetSingle();
+        if (e.TryGetProperty("hysteresis", out var hy)) lod.Hysteresis = hy.GetSingle();
+
+        if (!e.TryGetProperty("levels", out var levels) || levels.ValueKind != JsonValueKind.Array) return;
+        foreach (var lv in levels.EnumerateArray())
+        {
+            if (!lv.TryGetProperty("mesh", out var meshEl)) continue;
+            string material = lv.TryGetProperty("material", out var mt) ? mt.GetString() ?? "" : "";
+            if (!MaterialManager.TryPeek(material, out _))
+            {
+                Console.Error.WriteLine($"[scene] node '{node}': lod material '{material}' not declared; level skipped.");
+                continue;
+            }
+            var mesh = ResolveMesh(meshEl);
+            if (mesh == null) continue;
+            float within = lv.TryGetProperty("within", out var wi) ? wi.GetSingle() : 0f;
+            lod.Add(mesh, material, within);
+        }
+
+        // An empty group would silently render nothing, which looks like a missing object rather
+        // than a malformed file.
+        if (lod.Levels.Count == 0)
+        {
+            Console.Error.WriteLine($"[scene] node '{node}': lod has no usable levels; not attached.");
+            return;
+        }
+        obj.AddComponent(lod);
+    }
+
     private static void ReadLight(JsonElement e, SimObject obj)
     {
         var light = new LightComponent();
@@ -606,7 +670,7 @@ public static class SceneSerializer
     /// <see cref="Mesh.Source"/> was built by hand in game code and cannot be reconstructed from
     /// the file — that's reported loudly and the node is written without a mesh, rather than
     /// guessing a primitive and silently changing the level's geometry.</summary>
-    private static bool WriteMeshSpec(Utf8JsonWriter w, Mesh mesh, string node)
+    private static bool WriteMeshSpec(Utf8JsonWriter w, Mesh mesh, string node, string property = "mesh")
     {
         var src = mesh.Source;
         if (string.IsNullOrEmpty(src))
@@ -618,7 +682,7 @@ public static class SceneSerializer
         }
 
         var (kind, args) = SplitSpec(src);
-        w.WriteStartObject("mesh");
+        w.WriteStartObject(property);
         w.WriteString("primitive", kind);
         switch (kind)
         {

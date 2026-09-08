@@ -54,6 +54,17 @@ Sketch.Run(
             IsStatic = true, Color = Color.Magenta, DebugDraw = false,
         }));
 
+        // an LOD group: three levels with different meshes, plus a cull distance
+        var lodObj = new SimObject(9100, "lod_bush");
+        lodObj.Transform.Position = new Vector3(-4.4f, 0.5f, 1.2f);
+        Materials.Standard("bushFar", new Color(58, 108, 66));
+        var lod = new LodComponent { CullDistance = 180f, Hysteresis = 0.15f };
+        lod.Add(Primitives.Sphere(20, 14).Mesh, Materials.Standard("bush", new Color(70, 130, 80)), within: 20f);
+        lod.Add(Primitives.Sphere(10, 7).Mesh, "bush", within: 60f);
+        lod.Add(Primitives.Sphere(5, 4).Mesh, "bushFar", within: 140f);
+        lodObj.AddComponent(lod);
+        w.Add(lodObj);
+
         // light + billboard nodes
         w.AddPointLight(new Vector3(3, 3.5f, 2), Color.White, intensity: 6, range: 14);
         w.AddBillboard(new Vector3(0, 2.2f, 0), Color.Red, width: 0.9f, height: 0.14f);

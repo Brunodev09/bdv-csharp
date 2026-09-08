@@ -129,11 +129,21 @@ public sealed class World
         {
             var comps = o.Components;
             for (int i = 0; i < comps.Count; i++)
-                if (comps[i] is MeshComponent mc && RayHitsMesh(ray, o.WorldMatrix, mc.Mesh, out float t) && t < bestT)
+            {
+                // LOD objects pick against level 0: the most detailed level has the largest bounds,
+                // so a click can't miss because the object happens to be showing a coarser one.
+                Mesh? m = comps[i] switch
+                {
+                    MeshComponent mc => mc.Mesh,
+                    LodComponent { Levels.Count: > 0 } lod => lod.Levels[0].Mesh,
+                    _ => null,
+                };
+                if (m != null && RayHitsMesh(ray, o.WorldMatrix, m, out float t) && t < bestT)
                 {
                     bestT = t;
                     best = o;
                 }
+            }
         }
         var ch = o.Children;
         for (int i = 0; i < ch.Count; i++) PickWalk(ch[i], ray, ignore, ref best, ref bestT);

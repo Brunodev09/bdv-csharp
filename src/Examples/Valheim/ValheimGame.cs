@@ -228,20 +228,35 @@ public sealed class ValheimGame : Game
         trunk.AddComponent(new MeshComponent(Primitives.Cube().Mesh, "trunk"));
         root.AddChild(trunk);
 
-        // Two stacked foliage blobs to suggest a conifer.
+        // Two stacked foliage blobs to suggest a conifer, each with LOD. The trunk stays a plain
+        // cube — 24 vertices has nothing to give back.
+        //
+        // Distances are PER UNIT OF SCALE and these canopies are scaled ~2.4x before the instance's
+        // own 0.8-1.7x, so the real switch distances are roughly 2-4x the numbers below.
         var lower = new SimObject(_nextId++, "canopy_lo");
         lower.Transform.Position = new Vector3(0, 3.0f, 0);
         lower.Transform.Scale = new Vector3(2.4f, 2.2f, 2.4f);
-        lower.AddComponent(new MeshComponent(Primitives.Sphere(16, 12).Mesh, "leavesDark"));
+        lower.AddComponent(Foliage("leavesDark"));
         root.AddChild(lower);
 
         var upper = new SimObject(_nextId++, "canopy_hi");
         upper.Transform.Position = new Vector3(0, 4.4f, 0);
         upper.Transform.Scale = new Vector3(1.7f, 1.8f, 1.7f);
-        upper.AddComponent(new MeshComponent(Primitives.Sphere(16, 12).Mesh, "leaves"));
+        upper.AddComponent(Foliage("leaves"));
         root.AddChild(upper);
 
         World.SavePrefab(PinePrefab, root);
+    }
+
+    /// <summary>A canopy blob that drops detail with distance. Serialised into the prefab, so all
+    /// 97 trees inherit it from the one file.</summary>
+    private static LodComponent Foliage(string material)
+    {
+        var lod = new LodComponent { CullDistance = 100f };
+        lod.Add(Primitives.Sphere(16, 12).Mesh, material, within: 12f);
+        lod.Add(Primitives.Sphere(8, 6).Mesh, material, within: 34f);
+        lod.Add(Primitives.Sphere(5, 4).Mesh, material, within: 75f);
+        return lod;
     }
 
     private void PlantTree(float x, float groundY, float z)

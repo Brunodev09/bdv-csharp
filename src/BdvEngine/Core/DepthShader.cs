@@ -27,9 +27,11 @@ public sealed class DepthShader : Shader
     /// opaque depth pass costs exactly what it did before.</summary>
     internal static void BindCutout(Shader shader, Material material)
     {
-        float cutoff = material.EffectiveCutoff;
-        shader.SetUniform("u_alphaCutoff", cutoff);
-        if (cutoff <= 0f || material.DiffuseTexture == null) return;
+        shader.SetUniform("u_alphaCutoff", material.EffectiveCutoff);
+        // Bind the texture even for an opaque material. The sampler is declared either way, and an
+        // unbound unit makes the driver warn about an unloadable texture; binding is a cheap state
+        // change, while the FETCH is what the cutoff branch actually avoids.
+        if (material.DiffuseTexture == null) return;
         material.DiffuseTexture.Activate(0);
         shader.SetUniform("u_diffuse", 0);
     }

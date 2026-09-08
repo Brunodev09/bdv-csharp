@@ -49,12 +49,39 @@
           "y": 2.2,
           "z": 2.4
         },
-        "mesh": {
-          "primitive": "sphere",
-          "segments": 16,
-          "rings": 12
-        },
-        "material": "leavesDark"
+        "lod": {
+          "cullDistance": 100,
+          "hysteresis": 0.1,
+          "levels": [
+            {
+              "mesh": {
+                "primitive": "sphere",
+                "segments": 16,
+                "rings": 12
+              },
+              "material": "leavesDark",
+              "within": 12
+            },
+            {
+              "mesh": {
+                "primitive": "sphere",
+                "segments": 8,
+                "rings": 6
+              },
+              "material": "leavesDark",
+              "within": 34
+            },
+            {
+              "mesh": {
+                "primitive": "sphere",
+                "segments": 5,
+                "rings": 4
+              },
+              "material": "leavesDark",
+              "within": 75
+            }
+          ]
+        }
       },
       {
         "name": "canopy_hi",
@@ -68,12 +95,39 @@
           "y": 1.8,
           "z": 1.7
         },
-        "mesh": {
-          "primitive": "sphere",
-          "segments": 16,
-          "rings": 12
-        },
-        "material": "leaves"
+        "lod": {
+          "cullDistance": 100,
+          "hysteresis": 0.1,
+          "levels": [
+            {
+              "mesh": {
+                "primitive": "sphere",
+                "segments": 16,
+                "rings": 12
+              },
+              "material": "leaves",
+              "within": 12
+            },
+            {
+              "mesh": {
+                "primitive": "sphere",
+                "segments": 8,
+                "rings": 6
+              },
+              "material": "leaves",
+              "within": 34
+            },
+            {
+              "mesh": {
+                "primitive": "sphere",
+                "segments": 5,
+                "rings": 4
+              },
+              "material": "leaves",
+              "within": 75
+            }
+          ]
+        }
       }
     ]
   }

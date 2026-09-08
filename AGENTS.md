@@ -433,6 +433,22 @@ it's active so an object on a boundary doesn't strobe. There's no cross-fade.
 Measured on a 180-canopy corridor: **496k → 104k vertices (79% fewer)**, with 0.18% of the frame
 changing and **nothing at all changing in the near half**.
 
+LOD is part of the scene format, so it works in `.scene.json` and in prefabs:
+
+```jsonc
+{ "name": "canopy", "scale": {"x":2.4,"y":2.2,"z":2.4},
+  "lod": {
+    "cullDistance": 100, "hysteresis": 0.1,
+    "levels": [
+      { "mesh": {"primitive":"sphere","segments":16,"rings":12}, "material":"leaf", "within":12 },
+      { "mesh": {"primitive":"sphere","segments":8, "rings":6},  "material":"leaf", "within":34 },
+      { "mesh": {"primitive":"sphere","segments":5, "rings":4},  "material":"leaf", "within":75 }
+    ] } }
+```
+
+Each level carries its **own material**, so a far level can be a different look entirely (a flat
+impostor), not just a coarser mesh. Every level's material is declared in the file automatically.
+
 **`SimObject.Visible = false`** skips an object and its children entirely — the cheap way to hide a
 subtree (a closed door, an unused variant) without detaching it. Updates still run; hiding is not
 pausing.
