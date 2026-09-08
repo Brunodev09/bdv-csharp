@@ -40,6 +40,7 @@ internal sealed class MeshRenderer : IDisposable
 
     // Per-pass visible subsets of _queue / _skinned.
     private readonly List<(Matrix4x4 world, Mesh mesh, Material mat)> _visible = new();
+    private readonly List<(Matrix4x4 world, Mesh mesh, Material mat, float depth)> _transparent = new();
     private readonly List<(Matrix4x4 world, SkinnedMeshComponent smc)> _visibleSkinned = new();
     private readonly List<(Matrix4x4 world, Mesh mesh, Material mat)> _casters = new();
     private readonly BillboardShader _billboard = new();
@@ -84,6 +85,7 @@ internal sealed class MeshRenderer : IDisposable
         _skinned.Clear();
         _visible.Clear();
         _visibleSkinned.Clear();
+        _transparent.Clear();
         _casters.Clear();
         _billboards.Clear();
 
@@ -104,8 +106,21 @@ internal sealed class MeshRenderer : IDisposable
 
         var camFrustum = new Frustum(cam.ViewMatrix * cam.ProjectionMatrix(vw, vh));
         _visible.Clear();
+        _transparent.Clear();
         foreach (var r in _queue)
-            if (InView(camFrustum, r.mesh, r.world)) _visible.Add(r);
+        {
+            if (!InView(camFrustum, r.mesh, r.world)) continue;
+            if (r.mat.IsTransparent)
+            {
+                // Sort key is distance from the camera to the object's centre. Per-object rather
+                // than per-triangle: a proper solution would sort triangles, but that costs a
+                // rebuild every frame and per-object is right for the cases this engine has
+                // (water planes, glass panes, foliage cards).
+                float d = Vector3.DistanceSquared(cam.Position, r.world.Translation);
+                _transparent.Add((r.world, r.mesh, r.mat, d));
+            }
+            else _visible.Add(r);
+        }
 
         _visibleSkinned.Clear();
         foreach (var s in _skinned)
@@ -144,6 +159,7 @@ internal sealed class MeshRenderer : IDisposable
         DrawSingles(frame);
 
         DrawSkinned(frame);
+        DrawTransparent(frame);
         DrawBillboards(frame, cam);
     }
 
@@ -312,7 +328,7 @@ internal sealed class MeshRenderer : IDisposable
         var lightFrustum = new Frustum(map.LightViewProj);
         _casters.Clear();
         foreach (var r in _queue)
-            if (InView(lightFrustum, r.mesh, r.world)) _casters.Add(r);
+            if (r.mat.CastShadows && InView(lightFrustum, r.mesh, r.world)) _casters.Add(r);
 
         if (_casters.Count > 0)
         {
@@ -395,6 +411,46 @@ internal sealed class MeshRenderer : IDisposable
             shader.SetObject(world, nrm, smc.Material);
             smc.Mesh.Draw();
         }
+    }
+
+    /// <summary>
+    /// Alpha-blended geometry, after everything opaque, sorted far-to-near, with depth WRITES off.
+    ///
+    /// <para>All three matter. Drawing after opaque means transparent surfaces composite over a
+    /// finished background. Sorting far-to-near makes overlapping panes blend in the right order —
+    /// unsorted, the result depends on which happened to be drawn first, so the same two panes look
+    /// different from either side. And leaving depth writes on would let the nearest transparent
+    /// surface reject everything behind it, which is exactly the bug where water hides the sea
+    /// floor.</para>
+    ///
+    /// <para>No instancing here: a batch draws in one call and therefore in one order, which is the
+    /// opposite of what sorting needs.</para>
+    /// </summary>
+    private void DrawTransparent(in FrameParams frame)
+    {
+        if (_transparent.Count == 0) return;
+
+        _transparent.Sort(static (a, b) => b.depth.CompareTo(a.depth));   // far to near
+
+        _gl.DepthMask(false);
+        MeshShader? bound = null;
+
+        foreach (var (world, mesh, mat, _) in _transparent)
+        {
+            var shader = ShaderFor(mat);
+            if (!ReferenceEquals(shader, bound)) { shader.Use(); shader.SetFrame(frame); bound = shader; }
+
+            // Transparent surfaces are usually meant to be seen from both sides — a pane of glass
+            // with its back face culled vanishes when you walk around it.
+            if (mat.DoubleSided) _gl.Disable(EnableCap.CullFace);
+            else _gl.Enable(EnableCap.CullFace);
+
+            var nrm = Matrix4x4.Invert(world, out var inv) ? Matrix4x4.Transpose(inv) : world;
+            shader.SetObject(world, nrm, mat);
+            mesh.Draw();
+        }
+
+        _gl.DepthMask(true);
     }
 
     // Camera-facing sprites, drawn after the meshes: depth-tested (so they hide behind geometry)

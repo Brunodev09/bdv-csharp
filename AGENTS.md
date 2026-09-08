@@ -304,6 +304,43 @@ colliders. Swap in a spatial hash when a profile says so; the query API won't ch
 
 ---
 
+## Transparency
+
+A material is alpha-blended when its colour has `A < 255` — **inferred automatically at
+construction**, so translucent things sort correctly without anyone remembering to say so.
+
+```csharp
+// Inferred: alpha 224 -> BlendMode.Alpha
+Materials3D.Solid("water", new Color(34, 84, 132, 224));
+
+// Transparency that lives in the TEXTURE (foliage cards, glass with an opaque tint) can't be
+// inferred from the colour — say it explicitly:
+MaterialManager.TryPeek("foliage", out var m);
+m.Blend = BlendMode.Alpha;
+m.CastShadows = false;
+```
+
+Alpha-blended geometry is drawn **after everything opaque, sorted far-to-near, with depth writes
+off**. All three are needed: without the sort two panes composite differently depending on which
+was added to the scene first; with depth writes on, the nearest transparent surface rejects
+everything behind it — the bug where water hides the sea floor.
+
+**Transparent materials don't cast shadows by default** (`CastShadows`). The depth pass has no
+alpha testing, so a translucent surface would cast the solid silhouette of its geometry — water
+throwing a hard black rectangle across the sea bed.
+
+**Transparent geometry isn't instanced.** A batch draws in one call and therefore in one order,
+which is the opposite of what sorting needs.
+
+**Sorting is per object, by distance to its origin**, not per triangle. Right for water planes,
+glass and foliage cards; two large interpenetrating transparent meshes will still show artefacts.
+
+One trap worth knowing: modelling a "pane" as a thin **box** and setting `DoubleSided` draws its
+front *and* back face, so every pane blends twice. Leave culling on for closed shapes — a box
+always has a face pointing at you from either side.
+
+---
+
 ## Sky and fog
 
 Both **off by default** — turning the sky on replaces `Environment.Sky` as the background, and fog

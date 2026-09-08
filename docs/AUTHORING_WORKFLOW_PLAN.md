@@ -573,9 +573,20 @@ Separate from workflow. Ranked by whether they block shipping a 3D game.
 
    Verified by `sketches/sky_test.cs` (midday / dusk / off). With both disabled the sky pixel is
    byte-exact `(140,168,209)` — the old flat clear — and all seven other gates pass unchanged.
-6. **No transparency sort.** Billboards get a special late pass with `DepthMask(false)`; general
-   alpha-blended materials have no back-to-front queue. Water, glass, and foliage cards will all
-   render wrong.
+6. ~~**No transparency sort.**~~ ✅ **LANDED.** `Material` gains `BlendMode` (inferred from the
+   colour's alpha at construction), `CastShadows` and `IsTransparent`; `MeshRenderer` draws
+   alpha-blended geometry after all opaque geometry, sorted far-to-near, with depth writes off.
+   Transparent materials are excluded from the shadow pass, since the depth pass has no alpha
+   testing and would cast a solid silhouette.
+
+   Verified by `sketches/transparency_test.cs`: three overlapping panes added to the scene in
+   opposite orders render **identically**, which is precisely what fails without a sort, and an
+   opaque marker behind them stays visible, which fails if depth writes stay on. Moving the camera
+   to the far side changes the composite, confirming the sort follows the viewer.
+
+   Not covered: per-triangle sorting (this is per object, by distance to its origin) and
+   alpha-tested shadow casting for foliage. Transparent geometry is not instanced — a batch draws
+   in one order, which is the opposite of what sorting needs.
 7. **Lighting ceiling.** 8 forward lights (`Core/MeshShader.cs:44`), unshadowed, no IBL — which
    is why `AGENTS.md` has to warn that PBR metals look muted.
 

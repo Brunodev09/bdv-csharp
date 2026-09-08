@@ -6,6 +6,18 @@ namespace BdvEngine;
 /// this to a concrete shader (Unlit / Lit / PBR-lite). 2D sprite materials ignore it.</summary>
 public enum MaterialShading { Unlit, Lit, Pbr }
 
+/// <summary>How a material composites against what's already drawn.</summary>
+public enum BlendMode
+{
+    /// <summary>Writes depth, drawn in the fast batched pass, order doesn't matter.</summary>
+    Opaque,
+    /// <summary>Alpha-blended: drawn after all opaque geometry, sorted back-to-front, and does NOT
+    /// write depth. All three are required — without the sort, two panes composite differently
+    /// depending on which happened to be drawn first; without disabling depth writes, the nearer
+    /// one hides everything behind it.</summary>
+    Alpha,
+}
+
 public sealed class Material : IDisposable
 {
     private readonly Dictionary<string, object> _uniforms = new();
@@ -28,6 +40,21 @@ public sealed class Material : IDisposable
     /// <summary>When true the renderer disables back-face culling for this material — for
     /// single-sided meshes (e.g. heightmap terrain). Retires the old world-level cull toggle.</summary>
     public bool DoubleSided { get; set; }
+
+    /// <summary>Opaque or alpha-blended. Inferred at construction from the colour's alpha, so a
+    /// material built with a translucent colour sorts correctly without anyone remembering to say
+    /// so. Set it explicitly for a material whose transparency lives in its TEXTURE (foliage
+    /// cards, glass with an opaque tint) — the colour alone can't reveal that.</summary>
+    public BlendMode Blend { get; set; }
+
+    /// <summary>Whether this material writes into the shadow map. Defaults to false for
+    /// alpha-blended materials: the depth pass has no alpha testing, so a translucent surface would
+    /// cast the solid silhouette of its geometry — water throwing a hard black rectangle across the
+    /// sea floor. Force it on for foliage once alpha-tested depth exists.</summary>
+    public bool CastShadows { get; set; }
+
+    /// <summary>True when this material needs the sorted, depth-write-off transparent pass.</summary>
+    public bool IsTransparent => Blend == BlendMode.Alpha;
     public Shader? CustomShader { get; }
     public bool HasCustomShader => CustomShader != null;
 
@@ -63,6 +90,11 @@ public sealed class Material : IDisposable
         DiffuseTextureName = diffuseTextureName;
         Color = color;
         CustomShader = shader;
+        // Infer from the colour: a material built translucent almost certainly wants blending, and
+        // making that automatic is what stops "my water renders on top of everything" being the
+        // first thing every 3D scene runs into.
+        Blend = color.A < 255 ? BlendMode.Alpha : BlendMode.Opaque;
+        CastShadows = Blend == BlendMode.Opaque;
         if (!string.IsNullOrEmpty(diffuseTextureName))
             DiffuseTexture = TextureManager.Get(diffuseTextureName);
         RecomputeBatchKey();
