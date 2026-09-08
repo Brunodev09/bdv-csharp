@@ -250,6 +250,60 @@ code and let the file hold what you place around them.
 
 ---
 
+## 3D collision and the character controller
+
+Colliders join the physics world automatically. Distinct from the 2D `ColliderComponent`, which is
+unchanged.
+
+```csharp
+obj.AddComponent(new BoxCollider(Vector3.One));           // size is LOCAL: the transform scales it
+obj.AddComponent(new SphereCollider(radius: 0.5f));
+obj.AddComponent(new CapsuleCollider(0.35f, 1.8f, new Vector3(0, 0.9f, 0)));  // Y-aligned
+terrainObj.AddComponent(new TerrainCollider(heightmapTerrain));
+// every collider: .IsTrigger, .Layer, .Enabled, .Center
+```
+
+A capsule + `CharacterController` walks, slides, climbs and falls:
+
+```csharp
+var capsule = new CapsuleCollider(0.35f, 1.8f, new Vector3(0, 0.9f, 0));
+player.AddComponent(capsule);
+var cc = new CharacterController(capsule);
+player.AddComponent(cc);
+
+// each frame — feet sit at the object's origin:
+cc.Move(new Vector3(inputX, 0, inputZ) * 5f, dt);
+if (cc.IsGrounded && jump) cc.Jump(6f);
+// cc.IsGrounded / .GroundNormal / .VerticalVelocity / .HitWall
+// tune: Gravity, SlopeLimitDegrees, StepOffset, SkinWidth, CollisionMask
+```
+
+Queries:
+
+```csharp
+PhysicsWorld.Raycast(origin, dir, maxDist, out RayHit hit, layerMask, ignore);
+PhysicsWorld.OverlapSphere(center, radius);
+PhysicsWorld.OverlapCapsule(a, b, radius);
+PhysicsWorld.GroundHeight(from, searchDown, out float y, out Vector3 normal);
+PhysicsWorld.Clear();        // on a level swap, or the old level keeps colliding
+```
+
+**Collider size is LOCAL and multiplied by the object's scale**, exactly like Unity. A unit cube
+scaled 40× wants `new BoxCollider(Vector3.One)`, not `Vector3(40,1,40)` — writing the size twice
+gives you a collider 40× too big.
+
+**Boxes are world-axis-aligned**: a collider follows position and scale but *ignores rotation*.
+Fine for walls, crates and props; a tilted ramp needs a sphere/capsule approximation. Oriented
+boxes aren't in v1.
+
+**Detaching a `SimObject` does not unregister its colliders** — nothing calls `Unload` on removal.
+Call `PhysicsWorld.Unregister(collider)`, or `Clear()` between levels.
+
+Broadphase is a linear scan with AABB rejection, which is genuinely right for a few hundred
+colliders. Swap in a spatial hash when a profile says so; the query API won't change.
+
+---
+
 ## Shadows
 
 The sun casts shadows by default — static meshes, skinned characters, and prefab instances alike.

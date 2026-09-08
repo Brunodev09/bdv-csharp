@@ -95,6 +95,9 @@ public sealed class SimObject
     {
         _components.Add(component);
         component.SetOwner(this);
+        // Added after this object was already loaded (runtime spawn, editor "Add child", a
+        // collider attached mid-game): nothing else would ever call Load on it.
+        if (IsLoaded) component.Load();
     }
 
     public void AddBehavior(IBehavior behavior)

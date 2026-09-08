@@ -1,7 +1,7 @@
 # Authoring Workflow Plan — "Why Unity is easier, and how we get there"
 
-**Status:** Phases 1–3 landed (see §6), plus §9's #1 and #2 blockers (skinned animation,
-shadows). Phase 4 is draft.
+**Status:** Phases 1–3 landed (see §6), and all three §9 blockers are closed (skinned
+animation, shadows, 3D collision). Phase 4 is draft.
 **Follows:** `UNIFIED_3D_PLAN.md` (Phases 0–8, landed).
 **Goal:** Close the gap between "BdvEngine can render a 3D scene" and "BdvEngine is a nicer
 place to *build* a 3D game than Unity" — for a solo author working with an AI agent.
@@ -512,10 +512,26 @@ Separate from workflow. Ranked by whether they block shipping a 3D game.
    normal and got zero contribution from an overhead sun. Every ground plane in the engine had
    been rendering ambient-only — visible in this session's earlier screenshots, which I'd
    misattributed to scene lighting. Fixed by flipping the winding.
-3. **3D collision + character controller.** `Utils/Collision.cs` is `RectRect`/`CircleCircle`/
-   `LineRect` — 2D. `Behaviors/RigidBodyBehavior.cs` has `Vx, Vy` — 2D. No 3D collider, no
-   capsule sweep, no move-and-slide, no triggers. The cost is visible: `ValheimGame` hand-rolls
-   terrain grounding and keeps a `List<Vector4>` of tree spheres purely to stop camera clipping.
+3. ~~**3D collision + character controller.**~~ ✅ **LANDED.** `Physics/` adds `Bounds`,
+   `Collider` (Box / Sphere / Capsule / Terrain), `Physics` (segment and ray primitives),
+   `PhysicsWorld` (registry, raycast, overlap, ground height) and `CharacterController`
+   (capsule move-and-slide with gravity, ground and slope detection, step-up, triggers).
+   The 2D `ColliderComponent` is untouched.
+
+   Verified by `sketches/physics_test.cs`, ten cases run at fixed timestep: lands on a floor,
+   is stopped by a wall and reports it, climbs a 0.30 step, does **not** climb a 1.20 block,
+   jumps and lands, lands on a heightfield, walks uphill tracking the surface to within the skin
+   width, raycasts at the right distance and normal, and passes through a trigger while still
+   being reported by the overlap query.
+
+   **The key design call:** penetration is resolved from the **gradient of the signed distance
+   field**, not from `p - ClosestPoint(p)`. The difference vector is fine while a point is
+   outside but says nothing once it is inside — a box returns the point itself, and a heightfield
+   returns the surface *directly below*, which pushed a sunken character further down. One
+   `OutwardNormal` per shape replaces an N-by-N matrix of pairwise cases.
+
+   Not in v1: oriented (rotated) boxes, convex hulls, and dynamic rigid bodies. Broadphase is a
+   linear scan with AABB rejection, which is the right call for hundreds of colliders.
 
 ### Bounded, but you'll hit them fast
 
