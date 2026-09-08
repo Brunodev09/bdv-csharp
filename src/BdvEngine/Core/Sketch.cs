@@ -32,6 +32,7 @@ public static class Sketch
         Action<World> setup,
         Action<World, double>? update = null,
         Action<World>? draw = null,
+        Action<World>? hud = null,
         string title = "BdvEngine Sketch",
         int width = 1280,
         int height = 720)
@@ -60,7 +61,7 @@ public static class Sketch
             CapturePath = shot,
             CaptureFrame = frames,
         };
-        new Engine(new SketchGame(setup, update, draw), config).Run();
+        new Engine(new SketchGame(setup, update, draw, hud), config).Run();
     }
 
     private static string? ArgVal(string[] args, string flag)
@@ -76,16 +77,21 @@ public static class Sketch
         private readonly Action<World> _setup;
         private readonly Action<World, double>? _update;
         private readonly Action<World>? _draw;
+        private readonly Action<World>? _hud;
 
-        public SketchGame(Action<World> setup, Action<World, double>? update, Action<World>? draw)
+        public SketchGame(Action<World> setup, Action<World, double>? update, Action<World>? draw, Action<World>? hud)
         {
             _setup = setup;
             _update = update;
             _draw = draw;
+            _hud = hud;
         }
 
         public override void Init() => _setup(World);
         public override void Update(double dt) => _update?.Invoke(World, dt);
         public override void Render(Shader shader) => _draw?.Invoke(World);
+        // Runs AFTER the engine has flushed the scene sprites — the right place for a post-scene
+        // pass like the lighting multiply (which must land on already-rendered pixels).
+        public override void OnHud() => _hud?.Invoke(World);
     }
 }

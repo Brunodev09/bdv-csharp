@@ -49,6 +49,8 @@ public static class Lighting
     private static readonly float[] _posXY  = new float[MaxLights * 2];
     private static readonly float[] _radius = new float[MaxLights];
     private static readonly float[] _colRGB = new float[MaxLights * 3];
+    private static readonly float[] _dirXY   = new float[MaxLights * 2];   // spot facing (unit)
+    private static readonly float[] _coneCos = new float[MaxLights];       // cos(half-angle); -1 = omni
     private static readonly float[] _quad   = new float[8];
 
     private static uint _occTex;
@@ -125,7 +127,15 @@ public static class Lighting
         _count = 0;
     }
 
+    /// <summary>Add an omnidirectional (radial) point light.</summary>
     public static void AddLight(float x, float y, float radius, float r, float g, float b)
+        => AddSpot(x, y, radius, r, g, b, 0f, 0f, -1f);
+
+    /// <summary>Add a light restricted to a cone facing (<paramref name="dirX"/>,<paramref name="dirY"/>)
+    /// (roughly unit length). <paramref name="coneCos"/> is the cosine of the cone's half-angle;
+    /// pass -1 for a full circle. Use it for a directional vision/FOV that follows the aim.</summary>
+    public static void AddSpot(float x, float y, float radius, float r, float g, float b,
+        float dirX, float dirY, float coneCos)
     {
         int i = _count;
         if (i >= MaxLights) return;
@@ -136,6 +146,9 @@ public static class Lighting
         _colRGB[i * 3]     = r;
         _colRGB[i * 3 + 1] = g;
         _colRGB[i * 3 + 2] = b;
+        _dirXY[i * 2]     = dirX;
+        _dirXY[i * 2 + 1] = dirY;
+        _coneCos[i]       = coneCos;
     }
 
     /// <summary>
@@ -192,9 +205,13 @@ public static class Lighting
             int locPos    = _shader.GetUniformLocation("u_lightPos[0]");
             int locRadius = _shader.GetUniformLocation("u_lightRadius[0]");
             int locColor  = _shader.GetUniformLocation("u_lightColor[0]");
-            fixed (float* p = _posXY)  gl.Uniform2(locPos,    (uint)_count, p);
-            fixed (float* p = _radius) gl.Uniform1(locRadius, (uint)_count, p);
-            fixed (float* p = _colRGB) gl.Uniform3(locColor,  (uint)_count, p);
+            int locDir    = _shader.GetUniformLocation("u_lightDir[0]");
+            int locCone   = _shader.GetUniformLocation("u_lightCone[0]");
+            fixed (float* p = _posXY)   gl.Uniform2(locPos,    (uint)_count, p);
+            fixed (float* p = _radius)  gl.Uniform1(locRadius, (uint)_count, p);
+            fixed (float* p = _colRGB)  gl.Uniform3(locColor,  (uint)_count, p);
+            fixed (float* p = _dirXY)   gl.Uniform2(locDir,    (uint)_count, p);
+            fixed (float* p = _coneCos) gl.Uniform1(locCone,   (uint)_count, p);
         }
 
         // Occluder binding + world→UV transform.
@@ -222,7 +239,10 @@ public static class Lighting
         gl.VertexAttribPointer(POS_LOC, 2, VertexAttribPointerType.Float, false,
             2 * sizeof(float), (void*)0);
 
-        // Multiply blend = framebuffer *= shaderOutput.
+        // Multiply blend = framebuffer *= shaderOutput. Depth test OFF — this is a fullscreen pass
+        // and must dim EVERY pixel (the SpriteBatcher object layer leaves depth-test on, which would
+        // otherwise reject the multiply quad over sorted sprites and leave them undimmed).
+        gl.Disable(EnableCap.DepthTest);
         gl.BlendFunc(BlendingFactor.DstColor, BlendingFactor.Zero);
         gl.DrawArrays(PrimitiveType.TriangleFan, 0, 4);
         // Restore standard alpha blend so downstream UI / text renders normally.
@@ -267,6 +287,8 @@ uniform int   u_lightCount;
 uniform vec2  u_lightPos[MAX_LIGHTS];
 uniform float u_lightRadius[MAX_LIGHTS];
 uniform vec3  u_lightColor[MAX_LIGHTS];
+uniform vec2  u_lightDir[MAX_LIGHTS];
+uniform float u_lightCone[MAX_LIGHTS];
 uniform float u_hasOccluder;
 uniform vec2  u_worldToUV;
 uniform sampler2D u_occluder;
@@ -287,6 +309,15 @@ void main() {{
         float r = u_lightRadius[i];
         if (d >= r) continue;
 
+        // Cone / FOV restriction (u_lightCone = cos(half-angle); -1 = full circle).
+        float cone = 1.0;
+        if (u_lightCone[i] > -0.999) {{
+            vec2 nd = (v_world - lp) / max(d, 1e-4);
+            float cs = dot(nd, u_lightDir[i]);
+            cone = smoothstep(u_lightCone[i], u_lightCone[i] + 0.15, cs);
+            if (cone <= 0.0) continue;
+        }}
+
         // Shadow test: march from the fragment toward the light,
         // sampling the occluder. If a wall is hit, the light is
         // blocked for this pixel.
@@ -303,7 +334,7 @@ void main() {{
         if (shadow > 0.5) continue;
 
         float a = clamp(1.0 - d / r, 0.0, 1.0);
-        light += u_lightColor[i] * (a * a);
+        light += u_lightColor[i] * (a * a) * cone;
     }}
     fragColor = vec4(min(light, vec3(1.0)), 1.0);
 }}";
