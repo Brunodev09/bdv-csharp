@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Shared plumbing for the gates in tools/. Not referenced by the engine or any game: it
+       exists so `dotnet run tools/check_lod.cs` and friends don't each carry their own copy of
+       "spawn a sketch, parse its output, diff two PNGs, print ok/FAIL, set an exit code". -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>GateKit</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Decoding the sketches' PNG output. The engine already depends on this to write them. -->
+    <PackageReference Include="StbImageSharp" Version="2.30.15" />
+  </ItemGroup>
+
+</Project>

@@ -174,6 +174,13 @@ public sealed class Engine
     {
         Time.Advance(delta);
         MessageBus.Update(delta);
+        // Ears follow the camera by default. Done before AudioManager.Update so a source that
+        // finishes this frame was still mixed against a current listener.
+        if (AudioManager.AutoListenerFromCamera)
+        {
+            var cam = _world.Camera;
+            AudioManager.SetListener(cam.Position, cam.Target - cam.Position, cam.Up);
+        }
         AudioManager.Update();
 
         var size = _window.Size;

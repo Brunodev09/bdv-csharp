@@ -79,6 +79,16 @@ Sketch.Run(
         });
         w.Add(fxObj);
 
+        // an audio source: placed ambience is authored content, so it belongs in the file
+        var ambience = new SimObject(9201, "waterfall");
+        ambience.Transform.Position = new Vector3(-3.2f, 0.5f, -4f);
+        ambience.AddComponent(new AudioSourceComponent
+        {
+            Clip = "water", Loop = true, PlayOnLoad = false, Volume = 0.8f,
+            ReferenceDistance = 6f, MaxDistance = 55f, Falloff = AudioFalloff.Inverse,
+        });
+        w.Add(ambience);
+
         // light + billboard nodes
         w.AddPointLight(new Vector3(3, 3.5f, 2), Color.White, intensity: 6, range: 14);
         w.AddBillboard(new Vector3(0, 2.2f, 0), Color.Red, width: 0.9f, height: 0.14f);

@@ -457,7 +457,7 @@ this.
 Particle systems **serialise into `.scene.json`** through the generic `components` array
 (`"type": "particles3d"`), so an effect tuned in the F1 inspector saves out and comes back as tuned.
 
-Gate: `python3 tools/check_particles.py`
+Gate: `dotnet run tools/check_particles.cs`
 
 ---
 
@@ -493,6 +493,75 @@ because it has a visible edge where it starts, which reads as a wall of haze rat
 
 **Fog does not apply to `Materials.Unlit`.** Unlit means "raw colour, no scene lighting" — it's for
 debug helpers and UI-ish 3D, which shouldn't dissolve into the distance.
+
+---
+
+## Spatialised audio
+
+Sounds placed in the world, attenuated and panned by where they are relative to the listener. The
+listener follows the camera automatically.
+
+```csharp
+AudioManager.Load("water", "assets/water.wav");        // WAV, mono for 3D (see below)
+
+// one-off at a world position
+AudioManager.PlayAt("thud", hitPoint);
+
+// or attached to an object, so it follows the object around
+var falls = new SimObject(w.NextId(), "waterfall");
+falls.Transform.Position = new Vector3(14, 2, -30);
+falls.AddComponent(new AudioSourceComponent
+{
+    Clip = "water", Loop = true, PlayOnLoad = true,
+    ReferenceDistance = 6f, MaxDistance = 60f,
+});
+w.Add(falls);
+```
+
+**Mono clips only, for anything spatial.** OpenAL will not position a stereo buffer — it plays it
+flat, at full volume, ignoring the listener entirely. A "why is my 3D sound not 3D" bug is almost
+always a stereo WAV.
+
+**`ReferenceDistance` is the knob that matters.** It is the distance at which the sound is at full
+volume, and everything scales from it: a footstep wants ~1, a waterfall ~15. Reaching for `Rolloff`
+first is the usual mistake.
+
+```csharp
+falls.Falloff = AudioFalloff.Inverse;   // physical, clamped — the default
+                 AudioFalloff.Linear;   // exactly silent at MaxDistance, if a designer needs that
+                 AudioFalloff.None;     // full volume everywhere
+```
+
+**Check before you play.** Hardware voices are finite, and a busy scene will burn them on inaudible
+sounds. `Spatial.GainAt(distance)` mirrors OpenAL's own curve exactly, so it predicts what you'd
+actually hear:
+
+```csharp
+if (src.AudibleGain > 0.02f) src.Play();
+```
+
+**Doppler is free but off-ish by default.** `AudioSourceComponent` derives velocity from how far its
+owner moved since the last frame, so anything that moves gets Doppler without reporting a speed.
+Tune with `AudioManager.DopplerFactor` (0 disables) and `SpeedOfSound`.
+
+**The listener** is the camera unless you say otherwise:
+
+```csharp
+AudioManager.AutoListenerFromCamera = false;
+AudioManager.SetListener(player.Position, player.Forward, Vector3.UnitY, player.Velocity);
+```
+
+Orientation matters as much as position — a stale forward vector puts sounds on the wrong side of
+your head even when the position is right.
+
+Audio sources **serialise into `.scene.json`** (`"type": "audio"`), so placed ambience is authored
+content like everything else. With no audio device every call is a graceful no-op; audio never
+takes a game down.
+
+**Not covered**: reverb zones, occlusion, streaming long music files (they load fully into memory),
+and audio formats other than WAV.
+
+Gate: `dotnet run tools/check_audio3d.cs` — makes noise while it runs.
 
 ---
 
@@ -539,7 +608,7 @@ additional passes on the same HDR target rather than redesigns.
 Distinct from the 2D `Bloom` class, which stays as it is — that one glows content the game draws
 explicitly into an emissive buffer; this one finds bright pixels in the rendered scene by luminance.
 
-Gate: `python3 tools/check_postfx.py`
+Gate: `dotnet run tools/check_postfx.cs`
 
 ---
 
@@ -594,6 +663,8 @@ impostor), not just a coarser mesh. Every level's material is declared in the fi
 subtree (a closed door, an unused variant) without detaching it. Updates still run; hiding is not
 pausing.
 
+Gate: `dotnet run tools/check_lod.cs`
+
 ---
 
 ## Culling and instancing
@@ -625,6 +696,8 @@ would delete shadows cast by objects behind you — which is most of them with a
 
 Skinned meshes are culled with padded bounds, because a mesh's stored bounds are its *bind* pose
 and a raised arm reaches past them.
+
+Gate: `dotnet run tools/check_culling.cs`
 
 ---
 
@@ -840,6 +913,36 @@ SceneEditor.Active?.Duplicate(world);
 saving is the undo. Deleting is likewise only permanent once saved. A field stored in a *private*
 field can't be shown or edited; make it public if you want to tune it (that's also what makes it
 serialise). Rotate/scale gizmos aren't in yet — use the Transform fields.
+
+---
+
+## Gates (the regression suite)
+
+Every feature has one. They are single-file C# programs that run a sketch, measure what came out,
+and set an exit code — **not** unit tests: they render real frames and assert on pixels and counts.
+
+```bash
+dotnet run tools/check_culling.cs     # draw calls fall, picture holds
+dotnet run tools/check_cutout.cs      # a holed card casts a holed shadow
+dotnet run tools/check_lod.cs         # vertices fall, near field untouched
+dotnet run tools/check_particles.cs   # cost is per system, off-screen culled
+dotnet run tools/check_postfx.cs      # each post-fx knob does its own job
+dotnet run tools/check_audio3d.cs     # listener, positions, attenuation (MAKES NOISE)
+```
+
+Shared plumbing lives in `tools/GateKit/` — spawning a sketch, pulling numbers out of its output,
+decoding and diffing PNGs, tallying ok/FAIL. Write new gates against it rather than re-rolling
+process and image handling.
+
+**Two things to know when writing one:**
+
+- **Always pass `--shot`.** The engine exits after capturing; a sketch run without it never
+  terminates, and the gate hangs rather than failing.
+- **Crop off the top ~10% before comparing frames.** The stats overlay reports FPS, which
+  legitimately differs between runs and would swamp any real diff.
+
+Some sketches also self-check and print their own PASS/FAIL (`scene_roundtrip`, `collider_scene`,
+`physics_test`, `particles_test`); the gates above wrap or complement those.
 
 ---
 

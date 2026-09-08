@@ -13,6 +13,7 @@ public static class Registrations
         ComponentManager.RegisterBuilder(new AnimatedSpriteComponentBuilder());
         ComponentManager.RegisterBuilder(new ColliderComponentBuilder());
         ComponentManager.RegisterBuilder(new ParticleSystem3DBuilder());
+        ComponentManager.RegisterBuilder(new AudioSourceComponentBuilder());
         BehaviorManager.RegisterBuilder(new KeyboardMovementBehaviorBuilder());
         BehaviorManager.RegisterBuilder(new RotationBehaviorBuilder());
         BehaviorManager.RegisterBuilder(new PulseBehaviorBuilder());
