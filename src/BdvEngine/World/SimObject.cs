@@ -2,6 +2,17 @@ using System.Numerics;
 
 namespace BdvEngine;
 
+/// <summary>What kind of asset a <see cref="SimObject.Source"/> path points at.</summary>
+public enum AssetKind
+{
+    /// <summary>Composed in the scene file itself; serialises in full.</summary>
+    None,
+    /// <summary>Imported from a <c>.glb</c>; children are re-imported on load.</summary>
+    Model,
+    /// <summary>Instanced from a <c>.prefab.json</c>; children come from that file.</summary>
+    Prefab,
+}
+
 public sealed class SimObject
 {
     private readonly List<SimObject> _children = new();
@@ -16,11 +27,21 @@ public sealed class SimObject
     public int Id { get; }
     public string Name { get; set; }
 
-    /// <summary>Asset this object's subtree was imported from (e.g. <c>"assets/hero.glb"</c>), set
-    /// by <see cref="World.Load"/>. <see cref="SceneSerializer"/> writes this out as the node's
-    /// <c>"model"</c> and re-imports on load instead of serialising the generated children — so a
-    /// scene file references models rather than inlining their geometry.</summary>
+    /// <summary>Asset this object's subtree was imported from — a <c>.glb</c> model
+    /// (<see cref="World.Load"/>) or a <c>.prefab.json</c> (<see cref="World.Instantiate"/>).
+    /// <see cref="SceneSerializer"/> writes it as the node's <c>"model"</c> / <c>"prefab"</c> and
+    /// re-imports on load instead of inlining the generated children — so a scene file references
+    /// its assets rather than duplicating them, and editing the asset changes every instance.</summary>
     public string? Source { get; set; }
+
+    /// <summary>Which kind of asset <see cref="Source"/> names, so the loader knows how to rebuild
+    /// it. <see cref="AssetKind.None"/> for an ordinary node composed in the scene file itself.</summary>
+    public AssetKind SourceKind { get; set; }
+
+    /// <summary>Sever the link to <see cref="Source"/>, turning an instance into plain nodes that
+    /// serialise in full — Unity's "unpack prefab". The escape hatch for when an instance needs
+    /// edits the asset shouldn't have.</summary>
+    public void Unpack() { Source = null; SourceKind = AssetKind.None; }
 
     public Transform Transform { get; } = new();
     public bool IsLoaded { get; private set; }
@@ -84,6 +105,7 @@ public sealed class SimObject
 
     public void Load()
     {
+        if (IsLoaded) return;
         IsLoaded = true;
         foreach (var c in _components) c.Load();
         foreach (var ch in _children) ch.Load();

@@ -29,6 +29,7 @@ namespace BdvEngine;
 ///       "behaviors": [ { "type": "rotation", "name": "spin", "rotation": {"x":0,"y":1,"z":0} } ],
 ///       "children": [ ... ] },
 ///     { "name": "hero",  "model": "assets/hero.glb", "position": {"x":0,"y":2,"z":0} },
+///     { "name": "pine_7", "prefab": "prefabs/pine.prefab.json", "position": {"x":15,"y":0,"z":-3} },
 ///     { "name": "lamp",  "position": {"x":3,"y":4,"z":2},
 ///       "light": { "type": "Point", "color": "#FFFFFF", "intensity": 8, "range": 14 } }
 ///   ]
@@ -40,10 +41,10 @@ namespace BdvEngine;
 /// so a save you didn't edit produces no git diff. Float colours quantise to 8-bit hex on the
 /// first save and are stable after that — see <see cref="SceneJson"/>.</para>
 ///
-/// <para><b>Not covered</b> (deliberately, v1): prefab references, skinned/animated model state,
-/// custom shaders, and any component field whose type the reflection bridge doesn't support
-/// (<see cref="SceneJson.IsSupported"/>). Unsupported components are skipped with a warning rather
-/// than silently dropped.</para>
+/// <para><b>Not covered</b> (deliberately, v1): per-instance prefab overrides beyond name and
+/// transform, skinned/animated model state, custom shaders, and any component field whose type the
+/// reflection bridge doesn't support (<see cref="SceneJson.IsSupported"/>). Unsupported components
+/// are skipped with a warning rather than silently dropped.</para>
 /// </summary>
 public static class SceneSerializer
 {
@@ -156,8 +157,8 @@ public static class SceneSerializer
 
         if (o.Source != null)
         {
-            // Model node: reference the asset; children are re-imported on load.
-            w.WriteString("model", o.Source);
+            // Asset node: reference the file; its children are rebuilt from that file on load.
+            w.WriteString(o.SourceKind == AssetKind.Prefab ? "prefab" : "model", o.Source);
             WriteGenericMembers(w, o);
             w.WriteEndObject();
             return;
@@ -296,6 +297,114 @@ public static class SceneSerializer
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    //  Prefabs — compose once, instance many
+    // ─────────────────────────────────────────────────────────────────────────
+    //
+    // A .prefab.json is a single node plus the materials it needs. There is no new format and no
+    // new type: instancing is NodeFromJson, and a scene node that carries "prefab": "path"
+    // expands from that file at load. Because a prefab instance saves back as just the path plus
+    // its transform, editing the prefab file changes every instance.
+    //
+    // v1 has no override propagation and no per-instance overrides beyond name/transform. That is
+    // a large share of Unity's complexity budget and is not worth it at this scale; the escape
+    // hatch is SimObject.Unpack(), which turns an instance into plain nodes that serialise in full.
+
+    /// <summary>Cached prefab node JSON, keyed by path — parsed and material-registered once, then
+    /// instanced from the string. 400 pines cost one file read.</summary>
+    private static readonly Dictionary<string, string> _prefabCache = new();
+
+    /// <summary>Paths currently being expanded, so a prefab that (directly or transitively)
+    /// instances itself fails with a clear message instead of recursing until the stack dies.</summary>
+    private static readonly HashSet<string> _expanding = new(StringComparer.Ordinal);
+
+    /// <summary>Build a fresh instance of a <c>.prefab.json</c>. The returned node is detached —
+    /// <see cref="World.Instantiate"/> is the usual way in.</summary>
+    public static SimObject Instantiate(string prefabPath, Func<int> nextId)
+    {
+        if (!_expanding.Add(prefabPath))
+            throw new InvalidOperationException(
+                $"Prefab '{prefabPath}' instances itself (cycle: {string.Join(" -> ", _expanding)}).");
+        try
+        {
+            var node = NodeFromJson(PrefabNodeJson(prefabPath), nextId);
+            node.Source = prefabPath;
+            node.SourceKind = AssetKind.Prefab;
+            return node;
+        }
+        finally { _expanding.Remove(prefabPath); }
+    }
+
+    /// <summary>Read (and cache) a prefab file: register its materials, return its node's JSON.
+    /// Accepts both the wrapped form <c>{"materials":[...], "node":{...}}</c> and a bare node
+    /// object, so a node copied straight out of a scene file works as a prefab.</summary>
+    private static string PrefabNodeJson(string prefabPath)
+    {
+        if (_prefabCache.TryGetValue(prefabPath, out var cached)) return cached;
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(prefabPath), new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        });
+        var root = doc.RootElement;
+
+        // A prefab carries its own materials, or a scene that instances it would have to know to
+        // declare them — which would defeat "drop this file in and it works".
+        if (root.TryGetProperty("materials", out var mats) && mats.ValueKind == JsonValueKind.Array)
+            foreach (var m in mats.EnumerateArray()) ReadMaterial(m);
+
+        var node = root.TryGetProperty("node", out var n) ? n : root;
+        var json = node.GetRawText();
+        _prefabCache[prefabPath] = json;
+        return json;
+    }
+
+    /// <summary>Write a node out as a reusable <c>.prefab.json</c>, with the materials its subtree
+    /// references. The editor's "Save as prefab" — compose one in the scene, then instance it.</summary>
+    public static void SavePrefab(string path, SimObject node)
+    {
+        var materials = new SortedDictionary<string, Material>(StringComparer.Ordinal);
+        CollectMaterialsDeep(node, materials);
+
+        using var buffer = new MemoryStream();
+        using (var w = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
+        {
+            w.WriteStartObject();
+            w.WriteNumber("version", Version);
+            w.WriteStartArray("materials");
+            foreach (var m in materials.Values) WriteMaterial(w, m);
+            w.WriteEndArray();
+            w.WritePropertyName("node");
+            WriteNode(w, node);
+            w.WriteEndObject();
+        }
+
+        var dir = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        var tmp = path + ".tmp";
+        File.WriteAllBytes(tmp, buffer.ToArray());
+        File.Move(tmp, path, overwrite: true);
+        _prefabCache.Remove(path);   // next instance picks up what was just written
+        Console.WriteLine($"[prefab] saved {path} ({materials.Count} materials)");
+    }
+
+    // Unlike CollectMaterials, this does NOT stop at asset roots: saving a prefab has to capture
+    // the materials of the whole subtree as it stands right now.
+    private static void CollectMaterialsDeep(SimObject o, IDictionary<string, Material> into)
+    {
+        foreach (var c in o.Components)
+        {
+            if (c is MeshComponent mc) into[mc.Material.Name] = mc.Material;
+            else if (c is BillboardComponent bc) into[bc.Material.Name] = bc.Material;
+        }
+        foreach (var ch in o.Children) CollectMaterialsDeep(ch, into);
+    }
+
+    /// <summary>Forget cached prefab JSON so the next instance re-reads from disk — the hook a
+    /// prefab hot-reload would use, and what tests call between runs.</summary>
+    public static void ClearPrefabCache() => _prefabCache.Clear();
+
+    // ─────────────────────────────────────────────────────────────────────────
     //  Load
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -378,11 +487,17 @@ public static class SceneSerializer
         string name = e.TryGetProperty("name", out var n) ? n.GetString() ?? "node" : "node";
 
         SimObject obj;
-        if (e.TryGetProperty("model", out var modelEl) && modelEl.ValueKind == JsonValueKind.String)
+        if (e.TryGetProperty("prefab", out var prefabEl) && prefabEl.ValueKind == JsonValueKind.String)
+        {
+            obj = Instantiate(prefabEl.GetString()!, nextId);
+            obj.Name = name;
+        }
+        else if (e.TryGetProperty("model", out var modelEl) && modelEl.ValueKind == JsonValueKind.String)
         {
             var modelPath = modelEl.GetString()!;
             obj = GlbLoader.Load(modelPath, nextId);
             obj.Source = modelPath;
+            obj.SourceKind = AssetKind.Model;
             obj.Name = name;
         }
         else

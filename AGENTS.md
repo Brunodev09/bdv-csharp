@@ -250,6 +250,53 @@ code and let the file hold what you place around them.
 
 ---
 
+## Prefabs (`.prefab.json`) — compose once, instance many
+
+A prefab is a **single node plus the materials it needs**, in the same schema as a scene node.
+There is no new format and no new type. A scene node that carries `"prefab"` expands from that
+file at load, and saves back as just the path plus its transform — so **editing the one file
+changes every instance**.
+
+```csharp
+World.Instantiate("prefabs/pine.prefab.json").At(x, 0, z).Scale(1.2f);  // from code
+World.SavePrefab("prefabs/pine.prefab.json", node);                      // node -> reusable asset
+```
+
+```jsonc
+// prefabs/pine.prefab.json
+{
+  "version": 1,
+  "materials": [ { "name": "bark", "shading": "Lit", "color": "#5C3F28" } ],
+  "node": { "name": "pine", "children": [ { "name": "trunk", "mesh": {"primitive":"cube"}, ... } ] }
+}
+```
+
+```jsonc
+// ...instanced from a scene file
+{ "name": "pine_7", "prefab": "prefabs/pine.prefab.json", "position": {"x":15,"y":0,"z":-3} }
+```
+
+**Keep the prefab root's transform neutral.** An instance's transform *replaces* the root's, so if
+the root carries a scale (especially a non-uniform one), every instance that sets its own scale
+throws that away and the children — authored against it — come out distorted. Put the geometry in
+children and leave the root an unscaled container. This is why Unity prefab roots are empty
+GameObjects, and it is the single easiest way to get a prefab wrong.
+
+**Other rules:**
+
+- An instance persists **only its name and transform**. Anything else you change on one is lost on
+  the next save. To make an instance genuinely its own thing, `SimObject.Unpack()` (or the
+  editor's **Unpack** button) severs the link so it serialises in full.
+- A prefab carries **its own materials**, so a scene that instances it doesn't have to declare
+  them.
+- The file is read and cached once; every instance after that is built from cached JSON, and all
+  instances of the same primitive share one GPU buffer. 200 pines cost one file read and 3 meshes.
+- Prefabs can nest. A cycle (a prefab instancing itself, directly or transitively) is detected and
+  reported rather than blowing the stack.
+- `SceneSerializer.ClearPrefabCache()` forces a re-read after you edit a prefab file at runtime.
+
+---
+
 ## The in-game editor (F1)
 
 Every game built on the engine hosts a scene editor — press **F1**. It is a mode, not a separate

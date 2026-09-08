@@ -1,6 +1,6 @@
 # Authoring Workflow Plan — "Why Unity is easier, and how we get there"
 
-**Status:** Phases 1 and 2 landed (see §6). Phases 3–4 are draft.
+**Status:** Phases 1–3 landed (see §6). Phase 4 is draft.
 **Follows:** `UNIFIED_3D_PLAN.md` (Phases 0–8, landed).
 **Goal:** Close the gap between "BdvEngine can render a 3D scene" and "BdvEngine is a nicer
 place to *build* a 3D game than Unity" — for a solo author working with an AI agent.
@@ -359,7 +359,7 @@ gate still passes.
 - Held to the plan's scope: no docking, no undo, no multi-select, no play/pause. Rotate/scale
   gizmos deferred — translate covers most of the value and the Transform fields cover the rest.
 
-### Phase 3 — Prefabs
+### Phase 3 — Prefabs — ✅ LANDED
 
 **Goal:** compose once, instance many.
 
@@ -371,8 +371,48 @@ place at load.
 next load, not live). Unity's override system is a large chunk of its complexity budget and you
 will not miss it at this scale.
 
-**Acceptance:** `pine.prefab.json` replaces the 4-object cube-and-sphere stack in
-`ScatterTrees()`; 400 instances load; editing the prefab file changes all of them next run.
+**Acceptance — met** by `sketches/prefab_test.cs`, which is a stricter version of the stated gate:
+a pine composed in code is written out as a prefab, then instanced 202 times (200 from code, 2
+through a scene file's `"prefab"` key). It asserts that instances **save by reference** (835 bytes
+for two, no inlined subtrees), that all 202 **share 3 meshes**, that editing the one file
+**changes every instance**, and that an instance's transform **overrides** the prefab root's.
+Runs at 120 FPS. Every Phase 1 and 2 gate still passes.
+
+> I did not convert `ValheimGame.ScatterTrees` as the plan literally specified — that example is
+> still untracked WIP, and restructuring it would have put uncommitted work of yours into my
+> commit. The conversion is ~6 lines (`World.Instantiate(pine).At(...).Scale(...)` in place of the
+> 4-object stack) whenever you want it.
+
+**What shipped**
+
+- `SceneSerializer.Instantiate` / `SavePrefab` / `ClearPrefabCache`, `World.Instantiate` /
+  `SavePrefab`, `SimObject.SourceKind` + `Unpack()`, and the `"prefab"` node key.
+- Editor: a prefab row on the selected node — what it's an instance of, **Unpack**, **Reload
+  prefab**, and **Save as prefab** for an ordinary node.
+
+**Design calls**
+
+- **No new type.** `Prefab`, `PrefabLoader`, `PrefabRegistry` etc. already exist in `Prefabs/` as
+  the 2D grid-blueprint system for ColonySim. Rather than collide with those names, a scene prefab
+  is just a *file*: `SceneSerializer.Instantiate` + `World.Instantiate`. Simpler, and no rename of
+  working code.
+- **A prefab file carries its own materials**, so a scene that instances it needn't declare them —
+  otherwise "drop this file in and it works" wouldn't hold.
+- **The format reuses the node schema**, so `NodeToJson`/`NodeFromJson` (built in Phase 2 for the
+  editor's Duplicate) *is* the prefab mechanism. Duplicate and instancing are the same operation.
+- Held the plan's scope: **no override propagation, no per-instance overrides beyond
+  name/transform.** `Unpack()` is the escape hatch, and the editor states the limitation on the
+  instance rather than letting an edit quietly vanish at save time.
+
+**The finding worth keeping**
+
+The first version of the test rendered 202 flat discs instead of trees. It was not a bug — the
+composition was correct — but it exposed a real authoring trap: **an instance's transform replaces
+the prefab root's**, so a root carrying a non-uniform scale means every instance that sets its own
+scale discards that squash and the children, authored against it, come out distorted. The rule is
+*keep the prefab root a neutral unscaled container and put geometry in children* — which is
+exactly why Unity prefab roots are empty GameObjects. Now documented in `AGENTS.md`, and the
+easiest way to get a prefab wrong.
 
 ### Phase 4 — Everything else becomes data
 

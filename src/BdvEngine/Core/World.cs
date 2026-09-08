@@ -50,9 +50,30 @@ public sealed class World
     {
         var root = GlbLoader.Load(path, () => _nextId++);
         root.Source = path;   // so SceneSerializer can write the node back as a model reference
+        root.SourceKind = AssetKind.Model;
         Scene.AddObject(root);
         return new ObjectHandle(root, null);
     }
+
+    /// <summary>Instance a <c>.prefab.json</c> into this world — compose once, place many:
+    /// <code>
+    /// for (int i = 0; i &lt; 400; i++)
+    ///     World.Instantiate("prefabs/pine.prefab.json").At(x, groundY, z).Scale(0.8f + rng);
+    /// </code>
+    /// The prefab file is read and its materials registered once; every instance after that is
+    /// built from the cached JSON. Because an instance saves back as just its path plus its
+    /// transform, editing the prefab file changes all of them. Call <see cref="SimObject.Unpack"/>
+    /// on one to sever the link and make it an ordinary node.</summary>
+    public ObjectHandle Instantiate(string prefabPath)
+    {
+        var node = SceneSerializer.Instantiate(prefabPath, NextId);
+        Scene.AddObject(node);
+        if (Gfx.Gl != null) node.Load();   // Load is idempotent, so Init-time calls are safe too
+        return new ObjectHandle(node, null);
+    }
+
+    /// <summary>Write a node out as a reusable <c>.prefab.json</c> — the editor's "Save as prefab".</summary>
+    public void SavePrefab(string path, SimObject node) => SceneSerializer.SavePrefab(path, node);
 
     /// <summary>Load a <c>.scene.json</c> into this world — the authored half of a level as data
     /// (see <see cref="SceneSerializer"/>). The file's nodes land under a single container object

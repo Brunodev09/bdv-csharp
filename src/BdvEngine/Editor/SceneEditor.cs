@@ -94,6 +94,7 @@ public sealed class SceneEditor
     private string _status = "";
     private double _statusUntil;
     private bool _showEnvironment = true;
+    private string _prefabPath = "prefabs/new.prefab.json";
 
     /// <summary>Call once per frame from the engine's ImGui pass. Safe to call every frame whether
     /// or not the editor is showing — it handles its own F1 toggle.</summary>
@@ -326,7 +327,8 @@ public sealed class SceneEditor
                 MeshComponent => "#",
                 _ => icon,
             };
-        if (o.Source != null) icon = "@";                       // imported model
+        if (o.SourceKind == AssetKind.Model) icon = "@";        // imported model
+        if (o.SourceKind == AssetKind.Prefab) icon = "&";       // prefab instance
         if (o.Name.StartsWith("scene:", StringComparison.Ordinal)) icon = "+";
         return $"{icon} {o.Name}";
     }
@@ -355,6 +357,7 @@ public sealed class SceneEditor
         if (ImGui.InputText("Name", ref name, 96)) Selected.Name = name;
 
         DrawNodeActions(world);
+        DrawPrefabRow(world);
         ImGui.Separator();
 
         DrawTransform(Selected.Transform);
@@ -392,6 +395,49 @@ public sealed class SceneEditor
             Selected!.AddChild(child);
             child.Load();
             Selected = child;
+        }
+    }
+
+    /// <summary>Prefab controls for the selected node: what it's an instance of (and how to break
+    /// that link), or how to turn it into a prefab. An instance saves as its path plus a transform,
+    /// so anything else you change on it is NOT persisted — say so plainly rather than letting an
+    /// edit quietly vanish on the next save.</summary>
+    private void DrawPrefabRow(World world)
+    {
+        var sel = Selected!;
+
+        if (sel.SourceKind == AssetKind.Prefab)
+        {
+            ImGui.TextColored(new Vector4(0.65f, 0.85f, 1f, 1f), $"prefab instance: {sel.Source}");
+            ImGui.TextDisabled("Only name + transform are saved on an instance.");
+            if (ImGui.Button("Unpack"))
+            {
+                sel.Unpack();
+                Status("Unpacked — now an ordinary node, saved in full");
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Reload prefab"))
+            {
+                SceneSerializer.ClearPrefabCache();
+                Status("Prefab cache cleared — reload the scene to see changes");
+            }
+            return;
+        }
+        if (sel.SourceKind == AssetKind.Model) return;
+
+        ImGui.SetNextItemWidth(-72);
+        ImGui.InputTextWithHint("##prefabpath", "prefabs/thing.prefab.json", ref _prefabPath, 260);
+        ImGui.SameLine();
+        if (ImGui.Button("Save as prefab"))
+        {
+            if (string.IsNullOrWhiteSpace(_prefabPath)) Status("Set a prefab path first.");
+            else
+                try
+                {
+                    world.SavePrefab(_prefabPath, sel);
+                    Status($"Saved prefab {_prefabPath}");
+                }
+                catch (Exception e) { Status($"Prefab save failed: {e.Message}"); }
         }
     }
 
