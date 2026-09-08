@@ -19,6 +19,16 @@ public sealed class World
 
     private int _nextId = 1;
 
+    /// <summary>Path of the most recent <see cref="LoadScene"/>, and the container it produced —
+    /// what the editor's Save button writes back to. Null until a scene file is loaded (a purely
+    /// code-built world has nowhere to save to until you name a file).</summary>
+    public string? LoadedScenePath { get; private set; }
+    public SimObject? LoadedSceneRoot { get; private set; }
+
+    /// <summary>Hand out the next object id — for code building objects outside the fluent Add
+    /// helpers (the editor duplicating a node, a prefab instancing itself).</summary>
+    public int NextId() => _nextId++;
+
     /// <summary>Add a primitive/mesh to the world; returns a handle for fluent placement + material.</summary>
     public ObjectHandle Add(MeshSpec spec)
     {
@@ -58,6 +68,8 @@ public sealed class World
         var container = SceneSerializer.Load(this, path, () => _nextId++);
         Scene.AddObject(container);
         container.Load();   // Engine calls Scene.Load() once, after Init — later subtrees load here.
+        LoadedScenePath = path;
+        LoadedSceneRoot = container;
         return container;
     }
 
@@ -69,6 +81,8 @@ public sealed class World
         Scene.RemoveObject(previous);
         Scene.AddObject(fresh);
         fresh.Load();
+        LoadedScenePath = path;
+        LoadedSceneRoot = fresh;
         return fresh;
     }
 

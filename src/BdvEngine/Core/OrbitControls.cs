@@ -38,7 +38,11 @@ public sealed class OrbitControls : ICameraController
         var delta = mouse - _lastMouse;
         _lastMouse = mouse;
 
-        if (InputManager.IsLeftDown)
+        // Keep tracking the cursor even while the UI owns it, so releasing an editor panel or a
+        // gizmo handle doesn't snap the camera by the accumulated delta.
+        bool uiOwnsMouse = InputManager.UiWantsMouse;
+
+        if (InputManager.IsLeftDown && !uiOwnsMouse)
         {
             Yaw -= delta.X * RotateSpeed;
             Pitch -= delta.Y * RotateSpeed;
@@ -52,6 +56,7 @@ public sealed class OrbitControls : ICameraController
         Pitch = Math.Clamp(Pitch, MinPitch, MaxPitch);
 
         float wheel = InputManager.ConsumeWheelDelta();
+        if (uiOwnsMouse) wheel = 0f;              // scrolling a panel must not zoom the world
         if (wheel != 0f) Distance = Math.Clamp(Distance - wheel * ZoomSpeed, MinDistance, MaxDistance);
 
         float cp = MathF.Cos(Pitch);

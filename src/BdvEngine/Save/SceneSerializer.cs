@@ -269,6 +269,33 @@ public static class SceneSerializer
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    //  Single-node JSON — the unit the editor duplicates and (Phase 3) prefabs reuse
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Serialise one node (and its subtree) to JSON, in exactly the shape it would take
+    /// inside a scene file's <c>"nodes"</c> array. A <c>.prefab.json</c> is precisely this — which
+    /// is why duplicate and prefab-instancing are the same operation.</summary>
+    public static string NodeToJson(SimObject node)
+    {
+        using var buffer = new MemoryStream();
+        using (var w = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
+            WriteNode(w, node);
+        return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    /// <summary>Rebuild a node from <see cref="NodeToJson"/> output. Materials are resolved by name
+    /// against whatever is already registered, so a duplicate shares its source's materials.</summary>
+    public static SimObject NodeFromJson(string json, Func<int> nextId)
+    {
+        using var doc = JsonDocument.Parse(json, new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        });
+        return ReadNode(doc.RootElement, nextId);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     //  Load
     // ─────────────────────────────────────────────────────────────────────────
 

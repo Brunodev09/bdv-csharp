@@ -38,13 +38,15 @@ public sealed class RotationBehaviorBuilder : IBehaviorBuilder
 
 public sealed class RotationBehavior : BaseBehavior
 {
-    private readonly Vector3 _rotation;
+    /// <summary>Radians per second about each axis. Public (not a private copy of the data) so the
+    /// inspector can retune it live and the scene serialiser saves what you actually see.</summary>
+    public Vector3 Rotation;
 
-    public RotationBehavior(RotationBehaviorData data) : base(data) => _rotation = data.Rotation;
+    public RotationBehavior(RotationBehaviorData data) : base(data) => Rotation = data.Rotation;
 
     public override void Update(double deltaTime)
     {
-        _owner.Transform.Rotation += _rotation * (float)deltaTime;
+        _owner.Transform.Rotation += Rotation * (float)deltaTime;
         base.Update(deltaTime);
     }
 }

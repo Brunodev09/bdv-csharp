@@ -24,6 +24,15 @@ public sealed class EngineConfig
 
     /// <summary>Frame at which <see cref="CapturePath"/> is captured (lets the scene settle first).</summary>
     public int CaptureFrame { get; set; } = 30;
+
+    /// <summary>Host the in-game scene editor (F1). On by default: it costs nothing until you press
+    /// F1, and "the game is the editor" only works if it's always there. Turn it off for a shipped
+    /// build.</summary>
+    public bool Editor { get; set; } = true;
+
+    /// <summary>Open the editor immediately instead of waiting for F1 — for screenshots and for
+    /// launching straight into level-editing. Set by <c>--editor</c> through <see cref="Sketch"/>.</summary>
+    public bool EditorVisible { get; set; }
 }
 
 /// <summary>
@@ -77,6 +86,7 @@ public sealed class Engine
     private MeshRenderer _meshRenderer = null!;
     private DefaultShader _defaultShader = null!;   // 2D sprite shader for the ortho render path
     private ImGuiController _imgui = null!;
+    private SceneEditor? _editor;
 
     private readonly Game _game;
     private readonly EngineConfig _config;
@@ -84,6 +94,10 @@ public sealed class Engine
 
     public int CurrentFps { get; private set; }
     public int CurrentDrawCalls { get; private set; }
+
+    /// <summary>The in-game scene editor (F1), or null when <see cref="EngineConfig.Editor"/> is
+    /// off. Exposed so a game can open it programmatically or read the selection.</summary>
+    public SceneEditor? Editor => _editor;
 
     private double _fpsTimer;
     private int _frameCount;
@@ -141,6 +155,11 @@ public sealed class Engine
 
         _imgui = new ImGuiController(_gl, _window, _input);
         UI.ApplyDefaultStyle();
+        if (_config.Editor)
+        {
+            _editor = new SceneEditor { Visible = _config.EditorVisible || SceneEditor.RequestedOnCommandLine };
+            SceneEditor.Active = _editor;
+        }
 
         _game.World = _world;
         _game.Init();
@@ -226,7 +245,13 @@ public sealed class Engine
         io.DisplayFramebufferScale = new Vector2(fb.X / (float)size.X, fb.Y / (float)size.Y);
         _imgui.Update((float)delta);
         UI.Render(size.X, size.Y);
-        if (_config.ShowStats) DrawStatsOverlay(size.X);
+        _editor?.Draw(_world, size.X, size.Y);
+
+        // Publish pointer/keyboard ownership for the NEXT update tick, so camera controllers and
+        // gameplay don't fight the editor's panels and gizmo.
+        InputManager.UiWantsMouse = io.WantCaptureMouse || (_editor?.IsManipulating ?? false);
+        InputManager.UiWantsKeyboard = io.WantCaptureKeyboard;
+        if (_config.ShowStats) DrawStatsOverlay(size.X, size.Y, _editor?.Visible == true);
         _imgui.Render();
         _gl.Viewport(0, 0, (uint)fb.X, (uint)fb.Y);
 
@@ -248,9 +273,12 @@ public sealed class Engine
         CurrentDrawCalls = GLStats.DrawCalls;
     }
 
-    private void DrawStatsOverlay(int viewportW)
+    private void DrawStatsOverlay(int viewportW, int viewportH, bool editorOpen)
     {
-        ImGui.SetNextWindowPos(new Vector2(viewportW - 220 - 8, 8), ImGuiCond.Always);
+        // The editor's Inspector owns the top-right corner; drop the stats to the bottom-left
+        // while it's open so the two don't stack.
+        var pos = editorOpen ? new Vector2(8, viewportH - 64) : new Vector2(viewportW - 220 - 8, 8);
+        ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
         var flags = ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoTitleBar
                   | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove
                   | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNav

@@ -90,6 +90,15 @@ public static class InputManager
         _pressedThisFrame.Clear();
     }
 
+    /// <summary>True when an overlay (an ImGui panel, an editor gizmo drag) owns the pointer this
+    /// frame. Camera controllers and gameplay input should skip mouse handling when it's set,
+    /// otherwise dragging a gizmo handle also orbits the camera. Set by the engine from ImGui's
+    /// capture flags; one frame stale by construction, which is imperceptible.</summary>
+    public static bool UiWantsMouse { get; internal set; }
+
+    /// <summary>As <see cref="UiWantsMouse"/>, for typing — true while a text field has focus.</summary>
+    public static bool UiWantsKeyboard { get; internal set; }
+
     public static Vector2 GetMousePosition() => new(_mouseX, _mouseY);
     public static bool IsLeftDown => _leftDown;
     public static bool IsRightDown => _rightDown;

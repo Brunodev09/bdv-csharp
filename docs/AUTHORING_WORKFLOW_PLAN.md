@@ -1,6 +1,6 @@
 # Authoring Workflow Plan — "Why Unity is easier, and how we get there"
 
-**Status:** Phase 1 landed (see §6). Phases 2–4 are draft.
+**Status:** Phases 1 and 2 landed (see §6). Phases 3–4 are draft.
 **Follows:** `UNIFIED_3D_PLAN.md` (Phases 0–8, landed).
 **Goal:** Close the gap between "BdvEngine can render a 3D scene" and "BdvEngine is a nicer
 place to *build* a 3D game than Unity" — for a solo author working with an AI agent.
@@ -293,7 +293,7 @@ matching what `ValheimGame` does by hand today).
 - Materials named by `Materials.Standard(Color)` serialise under their auto-generated `__std_N`
   name. Use the `Materials.Standard(name, color)` overload for anything you intend to retune.
 
-### Phase 2 — Editor overlay (the payoff)
+### Phase 2 — Editor overlay (the payoff) — ✅ LANDED
 
 **Goal:** Unity's core loop — click object, change value, see it live, save — as an ImGui overlay
 inside the running game. ImGui.NET is already referenced and already composited
@@ -317,8 +317,47 @@ inside the running game. ImGui.NET is already referenced and already composited
 6. **Environment panel** — sky, ambient, sun direction/colour as live sliders. Cheap, and
    day/night tuning is currently a recompile.
 
-**Acceptance:** Launch Valheim, press F1, click a tree, drag its scale, press Save, quit,
-relaunch — the tree is the size you left it. No compiler involved.
+**Acceptance — met.** `sketches/editor_persist.cs` drives the editor's own code paths and then
+re-reads the file off disk: a gizmo move, a Scale field, a generated behavior field, a material
+colour + roughness, and a Duplicate (with its child subtree) all survive the save. Every Phase 1
+gate still passes.
+
+**What shipped**
+
+- `Editor/Inspector.cs` — reflection over public fields → ImGui widgets, plus `[Range]` and
+  `[HideInInspector]`. It reads the exact field set the serialiser writes, so anything editable is
+  anything persistable. **This is the file that makes the editor pay off**: a new public field on a
+  behavior gets a slider for free, forever.
+- `Editor/SceneEditor.cs` — hierarchy, inspector, environment, click-to-select, a translate gizmo,
+  Save/Reload, Duplicate/Delete/Add-child. Public `Select` / `Save` / `Duplicate` so it's
+  scriptable and testable without a mouse; `SceneEditor.Active` reaches the running one.
+- `EngineConfig.Editor` (on by default) + `EditorVisible` / `--editor`. The editor is hosted by the
+  engine, so **every game gets F1** — "the game is the editor" only works if it's always there.
+
+**Two bugs the build surfaced, both structural rather than cosmetic**
+
+1. **The camera fought the gizmo.** `OrbitControls` reads `InputManager.IsLeftDown` directly, so
+   dragging a handle also orbited. Fixed with `InputManager.UiWantsMouse` / `UiWantsKeyboard`,
+   published by the engine each frame from ImGui's capture flags plus the editor's drag state, and
+   respected by `OrbitControls` — which keeps tracking the cursor while yielding, so releasing a
+   panel doesn't snap the camera by the accumulated delta. Any future controller should read the
+   same flag.
+2. **F1 never fired.** `InputManager.WasKeyPressed` is cleared by `EndFrame()` at the end of the
+   update tick, and the editor draws in the render pass — the press flag was always gone. The
+   editor now tracks its own key edge.
+
+**Deviations and scope calls**
+
+- `RotationBehavior` kept its rotation in a **private** field, so the inspector could edit it and
+  nothing would move. Made public. This is the general rule the inspector imposes and it is a good
+  one: *state you want to tune must be a public field* — which is also exactly what makes it
+  serialise.
+- Live-object fields and their data-bag twins are deduped, live winning — the same precedence the
+  serialiser uses, so what you edit is what gets written.
+- ASCII-only icons: ImGui's default font atlas has no glyphs beyond it and anything else draws
+  as `?`.
+- Held to the plan's scope: no docking, no undo, no multi-select, no play/pause. Rotate/scale
+  gizmos deferred — translate covers most of the value and the Transform fields cover the rest.
 
 ### Phase 3 — Prefabs
 
