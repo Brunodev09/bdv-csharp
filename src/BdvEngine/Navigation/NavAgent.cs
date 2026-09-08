@@ -1,0 +1,155 @@
+using System.Numerics;
+using System.Text.Json;
+
+namespace BdvEngine;
+
+/// <summary>
+/// Walks a <see cref="SimObject"/> along a <see cref="NavMesh"/> path.
+///
+/// <para>Steering only — it produces a desired horizontal velocity and hands it to a
+/// <see cref="CharacterController"/> when there is one, so gravity, slopes, steps and collision
+/// stay the controller's job. Without a controller it moves the transform directly, which is right
+/// for something flying or for a test.</para>
+///
+/// <code>
+/// var agent = new NavAgent(nav) { Speed = 3.5f };
+/// npc.AddComponent(agent);
+/// agent.SetDestination(target);
+///
+/// if (agent.Arrived) { /* ... */ }
+/// </code>
+/// </summary>
+public sealed class NavAgent : BaseComponent
+{
+    private readonly List<Vector3> _path = new();
+    private int _index;
+    private NavMesh? _mesh;
+
+    [Range(0.1f, 30f)] public float Speed = 3f;
+
+    /// <summary>How close counts as reaching a waypoint. Too small and an agent circles a corner it
+    /// can never quite touch; too large and it cuts corners visibly.</summary>
+    [Range(0.05f, 5f)] public float ArriveRadius = 0.35f;
+
+    /// <summary>Degrees per second the agent may turn. 0 snaps instantly.</summary>
+    [Range(0f, 1440f)] public float TurnSpeed = 540f;
+
+    /// <summary>Stop this far from the final destination.</summary>
+    [Range(0f, 10f)] public float StoppingDistance = 0.1f;
+
+    /// <summary>True once the last waypoint is reached, or when there was nowhere to go.</summary>
+    public bool Arrived { get; private set; } = true;
+
+    /// <summary>True when the last <see cref="SetDestination"/> found no route. Distinct from
+    /// <see cref="Arrived"/>: one means "nothing to do", the other means "asked, and it's
+    /// impossible" — worth telling apart before an NPC stands still looking broken.</summary>
+    public bool PathFailed { get; private set; }
+
+    /// <summary>Current path, for debug drawing.</summary>
+    public IReadOnlyList<Vector3> Path => _path;
+
+    public int WaypointIndex => _index;
+
+    public NavMesh? Mesh
+    {
+        get => _mesh;
+        set => _mesh = value;
+    }
+
+    public NavAgent(NavMesh? mesh = null) : base(new NavAgentData()) => _mesh = mesh;
+
+    /// <summary>Path to a world position. Returns false (and sets <see cref="PathFailed"/>) when
+    /// there is no route, leaving the agent where it is rather than drifting toward an
+    /// unreachable point.</summary>
+    public bool SetDestination(Vector3 destination)
+    {
+        _path.Clear();
+        _index = 0;
+        Arrived = false;
+        PathFailed = false;
+
+        if (_mesh == null || _owner == null) { PathFailed = true; Arrived = true; return false; }
+
+        if (!_mesh.FindPath(_owner.WorldMatrix.Translation, destination, _path))
+        {
+            PathFailed = true;
+            Arrived = true;
+            return false;
+        }
+
+        // The first waypoint is where we already are; skipping it avoids a tiny backward step when
+        // the agent is standing slightly off the snapped position.
+        if (_path.Count > 1) _index = 1;
+        return true;
+    }
+
+    public void Stop()
+    {
+        _path.Clear();
+        _index = 0;
+        Arrived = true;
+    }
+
+    public override void Update(double deltaTime)
+    {
+        if (Arrived || _owner == null || _index >= _path.Count) return;
+
+        float dt = (float)deltaTime;
+        var position = _owner.WorldMatrix.Translation;
+        var target = _path[_index];
+
+        // Horizontal only: the controller owns vertical motion, and steering toward a waypoint's
+        // height would fight gravity on every slope.
+        var toTarget = new Vector3(target.X - position.X, 0f, target.Z - position.Z);
+        float distance = toTarget.Length();
+
+        bool last = _index == _path.Count - 1;
+        float threshold = last ? MathF.Max(StoppingDistance, 0.01f) : ArriveRadius;
+
+        if (distance <= threshold)
+        {
+            _index++;
+            if (_index >= _path.Count) { Arrived = true; return; }
+            target = _path[_index];
+            toTarget = new Vector3(target.X - position.X, 0f, target.Z - position.Z);
+            distance = toTarget.Length();
+            if (distance < 1e-5f) return;
+        }
+
+        var direction = toTarget / MathF.Max(distance, 1e-5f);
+
+        // Slow into the final waypoint so the agent settles instead of overshooting and jittering
+        // back. Intermediate waypoints keep full speed — they are corners, not destinations.
+        float speed = Speed;
+        if (last) speed = MathF.Min(speed, MathF.Max(distance, 0.01f) / MathF.Max(dt, 1e-4f));
+
+        var controller = _owner.GetComponent<CharacterController>();
+        if (controller != null) controller.Move(direction * speed, deltaTime);
+        else _owner.Transform.Position += direction * speed * dt;
+
+        if (TurnSpeed > 0f) FaceAlong(direction, dt);
+    }
+
+    private void FaceAlong(Vector3 direction, float dt)
+    {
+        float desired = MathF.Atan2(direction.X, direction.Z);
+        float current = _owner.Transform.Rotation.Y;
+
+        // Wrap the difference into [-pi, pi] so an agent turning past due-south takes the short way
+        // round instead of spinning almost all the way back.
+        float delta = desired - current;
+        while (delta > MathF.PI) delta -= MathF.Tau;
+        while (delta < -MathF.PI) delta += MathF.Tau;
+
+        float maxStep = TurnSpeed * MathF.PI / 180f * dt;
+        var rotation = _owner.Transform.Rotation;
+        rotation.Y = current + Math.Clamp(delta, -maxStep, maxStep);
+        _owner.Transform.Rotation = rotation;
+    }
+
+    private sealed class NavAgentData : IComponentData
+    {
+        public string Name { get; set; } = "navAgent";
+        public void SetFromJson(JsonElement json) { }
+    }
+}

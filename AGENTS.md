@@ -496,6 +496,77 @@ debug helpers and UI-ish 3D, which shouldn't dissolve into the distance.
 
 ---
 
+## Navmesh and agents
+
+Pathfinding over a walkable surface **baked from the collision world**, not authored. Place
+geometry, re-bake, and navigation matches what a character can actually walk on — there is no
+second representation of the level to keep in sync.
+
+```csharp
+// after the world is built and its colliders are registered
+w.Scene.RebakeMatrices();
+var nav = NavMeshBuilder.Build(new NavBakeSettings
+{
+    Bounds = new Bounds(new Vector3(-40, -5, -40), new Vector3(40, 20, 40)),
+    CellSize = 0.4f, AgentRadius = 0.35f, AgentHeight = 1.8f,
+    SlopeLimitDegrees = 50f, StepHeight = 0.45f,
+});
+
+var path = new List<Vector3>();
+if (nav.FindPath(from, to, path)) { }        // world waypoints, already funnelled straight
+nav.NearestPoint(clicked, out var onMesh);   // snap a click onto the mesh
+nav.IsWalkable(p);                           // can something stand here
+```
+
+An agent walks it, steering a `CharacterController` when there is one so gravity, slopes and steps
+stay the controller's job:
+
+```csharp
+var agent = new NavAgent(nav) { Speed = 3.5f };
+npc.AddComponent(agent);
+agent.SetDestination(target);
+
+if (agent.Arrived) { }
+if (agent.PathFailed) { }   // asked and impossible — NOT the same as Arrived
+```
+
+**Match the bake to the controller.** `SlopeLimitDegrees` and `StepHeight` should mirror the
+`CharacterController`'s, or the mesh promises routes the controller then refuses to walk, and
+agents stall against a step the path says is fine.
+
+**The bake reads the physics world.** A purely visual mesh with no collider is invisible to it —
+usually what you want, occasionally a surprise. Bake *after* `RebakeMatrices()`, since collider
+bounds come from baked transforms.
+
+**How it works, and the two settings that decide everything:**
+
+1. A ray down per cell finds the floor, its height and its slope.
+2. A ray up rejects cells without `AgentHeight` of headroom.
+3. The walkable set is **eroded by `AgentRadius`**, treating a drop taller than `StepHeight` as an
+   edge — that is what keeps paths a body's width from walls and off ledges.
+4. Cells merge into maximal rectangles: convex polys, far fewer nodes. On the gate scene, 10,868
+   walkable cells become **28 polygons** — a 388x smaller graph than A* on the grid.
+5. Rectangles sharing an edge within `StepHeight` are linked as portals.
+
+Paths are then A* over polygons plus a funnel over the portals, so waypoints land on corners rather
+than one per polygon — the gate's cross-scene route is 4 waypoints, not 28.
+
+**Polygons are axis-aligned rectangles.** The honest limitation: a diagonal wall becomes a staircase
+of rectangles rather than one angled polygon, so the mesh carries more polys than a Recast-style
+build would. Paths are still straight, because the funnel works on portal segments, not polygon
+shapes.
+
+**Not covered**: off-mesh links (jumps, ladders, doors), dynamic obstacle carving, local avoidance
+between agents, area costs, and partial paths toward an unreachable goal — `FindPath` fails
+outright rather than returning its best effort, which is deliberate: a pathfinder that quietly
+approximates sends agents walking confidently into walls.
+
+The mesh is baked, not authored, so it is **not** part of `.scene.json` — bake it after loading.
+
+Gate: `dotnet run tools/check_navmesh.cs`
+
+---
+
 ## Spatialised audio
 
 Sounds placed in the world, attenuated and panned by where they are relative to the listener. The
@@ -928,6 +999,7 @@ dotnet run tools/check_lod.cs         # vertices fall, near field untouched
 dotnet run tools/check_particles.cs   # cost is per system, off-screen culled
 dotnet run tools/check_postfx.cs      # each post-fx knob does its own job
 dotnet run tools/check_audio3d.cs     # listener, positions, attenuation (MAKES NOISE)
+dotnet run tools/check_navmesh.cs     # bakes from collision, routes around geometry
 ```
 
 Shared plumbing lives in `tools/GateKit/` — spawning a sketch, pulling numbers out of its output,
