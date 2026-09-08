@@ -48,4 +48,9 @@ public sealed class WorldEnvironment
 
     /// <summary>Distance fog. Off by default; fog is an art choice, not a fix.</summary>
     public FogSettings Fog { get; } = new();
+
+    /// <summary>HDR post-processing for the 3D path: exposure, bloom, tonemap and grading. Off by
+    /// default — turning it on changes how every existing scene looks, which has to be the author's
+    /// call rather than something that happens on upgrade.</summary>
+    public PostFxSettings PostFx { get; } = new();
 }

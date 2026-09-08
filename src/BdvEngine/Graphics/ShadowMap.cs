@@ -109,9 +109,27 @@ public sealed class ShadowMap : IDisposable
 
     /// <summary>Fit the light frustum around <paramref name="focus"/> and make this the draw target.
     /// Leaves the viewport at the shadow map's size; the caller restores it.</summary>
+    private int _restoreFbo;
+    private int _restoreW, _restoreH;
+
     public void BeginPass(Vector3 focus, Vector3 sunDirection, float distance)
     {
         LightViewProj = ComputeLightViewProj(focus, sunDirection, distance, Resolution);
+
+        // Remember the target we're interrupting so EndPass can put it back. Reading it from GL
+        // rather than taking it as a parameter keeps every existing caller working unchanged.
+        _gl.GetInteger(GLEnum.FramebufferBinding, out _restoreFbo);
+        _restoreW = Gfx.FramebufferWidth;
+        _restoreH = Gfx.FramebufferHeight;
+        if (_restoreFbo != 0)
+        {
+            // An off-screen target is rarely the window's size (the HDR buffer matches it, but a
+            // future half-res path would not), so take the viewport as it stands.
+            Span<int> vp = stackalloc int[4];
+            _gl.GetInteger(GLEnum.Viewport, vp);
+            _restoreW = vp[2];
+            _restoreH = vp[3];
+        }
 
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _fbo);
         _gl.Viewport(0, 0, (uint)Resolution, (uint)Resolution);
@@ -133,8 +151,11 @@ public sealed class ShadowMap : IDisposable
     public void EndPass()
     {
         _gl.CullFace(TriangleFace.Back);
-        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-        _gl.Viewport(0, 0, (uint)Gfx.FramebufferWidth, (uint)Gfx.FramebufferHeight);
+        // Restore whatever was bound before, not framebuffer 0. The scene pass may itself be
+        // rendering into an off-screen target (the HDR buffer the post-process stack owns), and
+        // hardcoding 0 here sent every frame after the shadow pass to the window instead.
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, (uint)_restoreFbo);
+        _gl.Viewport(0, 0, (uint)_restoreW, (uint)_restoreH);
     }
 
     /// <summary>Bind the depth texture for sampling in the main pass. Leaves unit 0 active so the

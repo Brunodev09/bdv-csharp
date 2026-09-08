@@ -84,6 +84,9 @@ public sealed class Engine
     private GL _gl = null!;
     private IInputContext _input = null!;
     private MeshRenderer _meshRenderer = null!;
+    // Built in Load(), not in a field initializer: it captures Gfx.Gl, which doesn't exist until
+    // the GL context is created.
+    private PostProcess _postFx = null!;
     private DefaultShader _defaultShader = null!;   // 2D sprite shader for the ortho render path
     private ImGuiController _imgui = null!;
     private SceneEditor? _editor;
@@ -151,6 +154,7 @@ public sealed class Engine
         _gl.CullFace(TriangleFace.Back);
 
         _meshRenderer = new MeshRenderer();
+        _postFx = new PostProcess();
         _defaultShader = new DefaultShader();
 
         _imgui = new ImGuiController(_gl, _window, _input);
@@ -219,10 +223,14 @@ public sealed class Engine
 
         var proj = _world.Camera.ProjectionMatrix(size.X, size.Y);
 
-        // (1) Scene pass — meshes + billboards, depth-tested.
+        // (1) Scene pass — meshes + billboards, depth-tested. When post-processing is on this
+        //     renders into an HDR target and is then bloomed/tonemapped onto the window; the UI
+        //     passes below stay in display space, so a HUD is never graded along with the world.
         _gl.Enable(EnableCap.DepthTest);
         _gl.DepthFunc(DepthFunction.Lequal);
+        bool hdr = _postFx.Begin(_world.Environment, fb.X, fb.Y);
         _meshRenderer.Render(_world.Scene, _world.Camera, _world.Environment, size.X, size.Y);
+        if (hdr) _postFx.End(_world.Environment, fb.X, fb.Y);
 
         // (2) Immediate-mode pass in the camera's projection — SpriteBatcher manages its own depth.
         _gl.Disable(EnableCap.DepthTest);
@@ -298,6 +306,7 @@ public sealed class Engine
         AudioManager.Shutdown();
         _imgui?.Dispose();
         _meshRenderer?.Dispose();
+        _postFx?.Dispose();
         _defaultShader?.Dispose();
         InputManager.Shutdown();
         _input.Dispose();

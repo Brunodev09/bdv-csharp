@@ -25,21 +25,33 @@ public sealed class Framebuffer : IDisposable
     public uint ColorTex { get; private set; }
     public int  Width    { get; private set; }
     public int  Height   { get; private set; }
+
+    /// <summary>Depth renderbuffer, or 0. Needed by any pass that renders 3D GEOMETRY into this
+    /// target rather than compositing full-screen quads into it — without it every triangle passes
+    /// the depth test and the scene draws in submission order.</summary>
+    public uint DepthRbo { get; private set; }
+
     private readonly InternalFormat _colorFormat;
+    private readonly bool _withDepth;
 
     /// <param name="colorFormat">Colour-attachment internal format.
     /// Defaults to <see cref="InternalFormat.Rgba8"/>; use
     /// <see cref="InternalFormat.Rgba16f"/> for HDR later.</param>
+    /// <param name="withDepth">Attach a depth buffer. Required for 3D scene passes; pointless for
+    /// the full-screen blur/composite steps, which never depth-test.</param>
     public Framebuffer(int width, int height,
-                       InternalFormat colorFormat = InternalFormat.Rgba8)
+                       InternalFormat colorFormat = InternalFormat.Rgba8,
+                       bool withDepth = false)
     {
         _colorFormat = colorFormat;
+        _withDepth = withDepth;
         Width  = width;
         Height = height;
         var gl = Gfx.Gl;
 
         Fbo      = gl.GenFramebuffer();
         ColorTex = gl.GenTexture();
+        if (withDepth) DepthRbo = gl.GenRenderbuffer();
         Allocate(gl, width, height);
     }
 
@@ -70,6 +82,16 @@ public sealed class Framebuffer : IDisposable
         gl.BindFramebuffer(FramebufferTarget.Framebuffer, Fbo);
         gl.FramebufferTexture2D(FramebufferTarget.Framebuffer,
             FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, ColorTex, 0);
+
+        if (_withDepth)
+        {
+            gl.BindRenderbuffer(RenderbufferTarget.Renderbuffer, DepthRbo);
+            gl.RenderbufferStorage(RenderbufferTarget.Renderbuffer, InternalFormat.DepthComponent24,
+                                   (uint)w, (uint)h);
+            gl.FramebufferRenderbuffer(FramebufferTarget.Framebuffer,
+                FramebufferAttachment.DepthAttachment, RenderbufferTarget.Renderbuffer, DepthRbo);
+            gl.BindRenderbuffer(RenderbufferTarget.Renderbuffer, 0);
+        }
 
         // Sanity check — surface the error at construction time
         // instead of during a mysterious black frame later.
@@ -114,5 +136,6 @@ public sealed class Framebuffer : IDisposable
         var gl = Gfx.Gl;
         if (Fbo != 0)      { gl.DeleteFramebuffer(Fbo);      Fbo = 0; }
         if (ColorTex != 0) { gl.DeleteTexture(ColorTex);     ColorTex = 0; }
+        if (DepthRbo != 0) { gl.DeleteRenderbuffer(DepthRbo); DepthRbo = 0; }
     }
 }

@@ -496,6 +496,53 @@ debug helpers and UI-ish 3D, which shouldn't dissolve into the distance.
 
 ---
 
+## Post-processing (HDR, bloom, tonemap, grading)
+
+Off by default. Turning it on renders the 3D scene into an HDR buffer, then blooms, tonemaps and
+grades it on the way to the screen. **This is the single biggest visual upgrade per line of code in
+the engine** — it's most of the difference between "rendered" and "shot".
+
+```csharp
+var fx = w.Environment.PostFx;
+fx.Enabled    = true;
+fx.Exposure   = 1.15f;              // reach for this first
+fx.Tonemap    = TonemapMode.Aces;   // None | Reinhard | Aces
+fx.Vignette   = 0.3f;
+fx.Saturation = 0.9f;
+fx.Tint       = new Vector3(1.05f, 1f, 0.94f);   // warm
+
+fx.Bloom.Threshold = 1.0f;   // luminance a pixel must exceed to glow
+fx.Bloom.Intensity = 0.9f;
+fx.Bloom.Iterations = 3;     // each pair roughly doubles the halo width
+fx.Bloom.Downsample = 2;     // 4 is softer and a quarter of the cost
+```
+
+**Why HDR is the whole point.** An 8-bit buffer clamps every pixel at 1 before anything can look at
+it, so a blazing highlight and a merely-white surface become the same number. The information
+bloom and tonemapping need is gone before they run. A half-float target keeps values above 1 — which
+is why a `Threshold` above 1 is meaningful at all, and why the tonemap has something to roll off.
+
+Measured on the gate scene: **10.1% of the frame was pure clipped white without a tonemap, 0.00%
+with ACES.** That region is the pool of light on the ground — a flat blob with every bit of shape
+inside it lost, made readable again.
+
+**Ordering.** Only the 3D scene pass goes through the stack. The immediate-mode pass and the HUD
+draw afterwards in display space, so **UI is never tonemapped or graded along with the world** —
+which is what you want, and what would otherwise make white text glow.
+
+**Knobs, roughly in the order they earn their keep:** `Exposure`, `Tonemap`, `Bloom.Intensity`,
+`Vignette`, `Saturation`, `Contrast`, `Tint`, `Gamma`.
+
+**Not covered**: depth of field, motion blur, SSAO, chromatic aberration, auto-exposure. All are
+additional passes on the same HDR target rather than redesigns.
+
+Distinct from the 2D `Bloom` class, which stays as it is — that one glows content the game draws
+explicitly into an emissive buffer; this one finds bright pixels in the rendered scene by luminance.
+
+Gate: `python3 tools/check_postfx.py`
+
+---
+
 ## LOD
 
 Swap a mesh for a cheaper one with distance, and drop it entirely past a cull range. Use in place
