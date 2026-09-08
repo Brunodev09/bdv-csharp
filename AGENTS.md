@@ -224,7 +224,20 @@ The format — every field optional, sensible defaults:
       "light": { "type": "Point", "color": "#FFFFFF", "intensity": 8, "range": 14 } },
 
     { "name": "hp", "position": {"x":0,"y":2.2,"z":0},
-      "billboard": { "material": "leaf", "width": 0.9, "height": 0.14 } }
+      "billboard": { "material": "leaf", "width": 0.9, "height": 0.14 } },
+
+    { "name": "crate", "position": {"x":-3,"y":1,"z":0}, "scale": {"x":2,"y":2,"z":2},
+      "mesh": { "primitive": "cube" }, "material": "bark",
+      "collider": { "shape": "box", "size": {"x":1,"y":1,"z":1} } },
+
+    { "name": "pickup", "position": {"x":0,"y":1,"z":0},
+      "collider": { "shape": "sphere", "radius": 0.6, "isTrigger": true } },
+
+    { "name": "table", "position": {"x":0,"y":0,"z":-3.5},
+      "colliders": [
+        { "shape": "box", "size": {"x":2,"y":0.1,"z":1}, "center": {"x":0,"y":1,"z":0} },
+        { "shape": "box", "size": {"x":0.1,"y":1,"z":0.1}, "center": {"x":-0.9,"y":0.5,"z":0.4} }
+      ] }
   ]
 }
 ```
@@ -240,13 +253,19 @@ The format — every field optional, sensible defaults:
   for a `.glb` instead — its children are re-imported on load, not stored in the file.
 - `components` / `behaviors` go through the same builder registry as everything else, so `"type"`
   is the registered name (`collider`, `sprite`, `rotation`, `rigidBody`, `keyboardMovement`, ...).
+- **Colliders**: `"collider"` for one shape, `"colliders"` for several on one node. `shape` is
+  `box` (`size`), `sphere` (`radius`) or `capsule` (`radius`, `height`); all take `center`,
+  `layer`, `isTrigger` and `enabled`, each omitted at its default. **Sizes are LOCAL and get
+  multiplied by the node's scale** — a unit cube scaled 40x wants `size` 1, not 40.
 - **Comments and trailing commas are allowed.** Unknown keys are ignored.
 - A malformed file **keeps the last-good scene** and prints the error — it never blanks the level.
 
-**What can't round-trip** (both are reported loudly, never silently wrong): a mesh assembled by
-hand from vertices rather than via `Mesh.Cube/Sphere/Plane` (e.g. `HeightmapTerrain`), and a
-texture generated at runtime rather than loaded from a file. Both are procedural — keep them in
-code and let the file hold what you place around them.
+**What can't round-trip** (all reported loudly, never silently wrong): a mesh assembled by hand
+from vertices rather than via `Mesh.Cube/Sphere/Plane` (e.g. `HeightmapTerrain`), a texture
+generated at runtime rather than loaded from a file, and `TerrainCollider` — which wraps generated
+terrain, so re-attach it in code after loading. All three are procedural — keep them in code and
+let the file hold what you place around them. Box colliders are also **axis-aligned**: they ignore
+the node's rotation, so a tilted ramp needs a capsule or sphere.
 
 ---
 
@@ -262,6 +281,15 @@ obj.AddComponent(new CapsuleCollider(0.35f, 1.8f, new Vector3(0, 0.9f, 0)));  //
 terrainObj.AddComponent(new TerrainCollider(heightmapTerrain));
 // every collider: .IsTrigger, .Layer, .Enabled, .Center
 ```
+
+Box/sphere/capsule colliders also **live in the scene file** — see the `"collider"` block above, so
+placed collision is authored and tuned alongside the geometry rather than only in code. They show
+up in the F1 inspector under their shape name and are editable there.
+
+**Swapping levels:** call `SimObject.Unload()` on a scene you're discarding (or
+`PhysicsWorld.Clear()`), or its colliders stay registered and the old level keeps colliding with
+the new one. `World.ReloadScene` does this for you; detaching a node on its own does not, because
+reparenting must not release resources.
 
 A capsule + `CharacterController` walks, slides, climbs and falls:
 
@@ -548,10 +576,27 @@ hand node, read a bone's world matrix for an IK target, or move a joint by hand.
 
 **Not supported yet** (each fails loudly or degrades predictably, never silently): morph targets;
 CUBICSPLINE interpolation (parsed, then sampled as LINEAR); animation of anything but node
-translation/rotation/scale. There are no skeletal *shadows* either, because there are no shadows.
+translation/rotation/scale. Skinned meshes *do* cast shadows — they go through the depth pass with
+the same joint palette as the colour pass.
 
 To generate a rigged test asset without Blender:
 `python3 tools/make_test_rig.py sketches/assets/bendy.glb`
+
+**A downloaded model almost certainly has no rig.** Most marketplace and AI-generated assets are
+static sculpts: `skins: 0`, `animations: 0`, and no JOINTS_0/WEIGHTS_0 attributes. Nothing in the
+engine can animate those, because there is nothing to animate — check before assuming a bug:
+
+```bash
+python3 -c "import json,struct,sys; d=open(sys.argv[1],'rb').read(); \
+  n=struct.unpack('<I', d[12:16])[0]; j=json.loads(d[20:20+n]); \
+  print('skins', len(j.get('skins',[])), 'anims', len(j.get('animations',[])))" model.glb
+```
+
+`sketches/autorig.cs` builds a throwaway spine up such a model and weights it by height, purely so
+you can see the skinning path run on real content. It is a **test rig, not animation** — it has no
+anatomy, no joints where limbs actually bend, and it visibly smears an outstretched arm, which is
+the honest consequence of weighting by height alone. Real animation needs the model rigged in
+Blender, or an already-rigged character.
 
 ---
 

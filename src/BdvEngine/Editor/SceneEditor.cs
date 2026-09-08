@@ -469,6 +469,12 @@ public sealed class SceneEditor
         MeshComponent => "mesh",
         LightComponent => "light",
         BillboardComponent => "billboard",
+        // Name the shape, not the base type: "collider3d" on four rows tells you nothing about
+        // which of them is the one you meant to resize.
+        BoxCollider => "box collider",
+        SphereCollider => "sphere collider",
+        CapsuleCollider => "capsule collider",
+        TerrainCollider => "terrain collider",
         _ => "component",
     };
 

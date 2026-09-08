@@ -34,7 +34,13 @@ namespace BdvEngine;
 ///       "light": { "type": "Point", "color": "#FFFFFF", "intensity": 8, "range": 14 } },
 ///     { "name": "canopy", "lod": { "cullDistance": 200, "levels": [
 ///         { "mesh": {"primitive":"sphere","segments":24,"rings":16}, "material":"leaf", "within":25 },
-///         { "mesh": {"primitive":"sphere","segments":5,"rings":4},   "material":"leaf", "within":150 } ] } }
+///         { "mesh": {"primitive":"sphere","segments":5,"rings":4},   "material":"leaf", "within":150 } ] } },
+///     { "name": "crate", "mesh": {"primitive":"cube"}, "material": "bark",
+///       "collider": { "shape": "box", "size": {"x":1,"y":1,"z":1} } },
+///     { "name": "pickup", "collider": { "shape": "sphere", "radius": 0.6, "isTrigger": true } },
+///     { "name": "table", "colliders": [
+///         { "shape": "box", "size": {"x":2,"y":0.1,"z":1}, "center": {"x":0,"y":1,"z":0} },
+///         { "shape": "box", "size": {"x":0.1,"y":1,"z":0.1}, "center": {"x":-0.9,"y":0.5,"z":0.4} } ] }
 ///   ]
 /// }
 /// </code>
@@ -44,10 +50,20 @@ namespace BdvEngine;
 /// so a save you didn't edit produces no git diff. Float colours quantise to 8-bit hex on the
 /// first save and are stable after that — see <see cref="SceneJson"/>.</para>
 ///
+/// <para><b>Colliders.</b> <c>shape</c> is <c>box</c> (with <c>size</c>), <c>sphere</c> or
+/// <c>capsule</c> (with <c>radius</c>, and <c>height</c> for the capsule). All three also take
+/// <c>center</c>, <c>layer</c>, <c>isTrigger</c> and <c>enabled</c>; each is omitted from the file
+/// at its default. Sizes are LOCAL and are multiplied by the node's scale, so a unit cube scaled
+/// 40x needs <c>size</c> 1, not 40 — the same convention the collider classes use.
+/// <see cref="TerrainCollider"/> is the exception: it wraps generated terrain, so it is attached in
+/// code and skipped here with a warning.</para>
+///
 /// <para><b>Not covered</b> (deliberately, v1): per-instance prefab overrides beyond name and
-/// transform, skinned/animated model state, custom shaders, and any component field whose type the
-/// reflection bridge doesn't support (<see cref="SceneJson.IsSupported"/>). Unsupported components
-/// are skipped with a warning rather than silently dropped.</para>
+/// transform, skinned/animated model state, custom shaders, oriented (rotated) box colliders — the
+/// shape ignores node rotation, so a tilted ramp still needs a capsule or sphere — and any
+/// component field whose type the reflection bridge doesn't support
+/// (<see cref="SceneJson.IsSupported"/>). Unsupported components are skipped with a warning rather
+/// than silently dropped.</para>
 /// </summary>
 public static class SceneSerializer
 {
@@ -202,6 +218,7 @@ public static class SceneSerializer
             }
         }
 
+        WriteColliders(w, o);
         WriteGenericMembers(w, o);
 
         if (o.Children.Count > 0)
@@ -231,6 +248,69 @@ public static class SceneSerializer
             w.WriteEndObject();
         }
         w.WriteEndArray();
+        w.WriteEndObject();
+    }
+
+    /// <summary>
+    /// Collision shapes. One node commonly carries several — a table is a top plus four legs, a
+    /// character a hitbox plus a hurtbox — so a single shape writes <c>"collider"</c> and several
+    /// write <c>"colliders"</c>. A one-element array in every file would be noise for the case
+    /// that dominates.
+    ///
+    /// <para><see cref="TerrainCollider"/> is deliberately not written: it wraps a live
+    /// <see cref="HeightmapTerrain"/>, which is generated in code. Referencing one by name would
+    /// be inventing a terrain asset format on the side of this change.</para>
+    /// </summary>
+    private static void WriteColliders(Utf8JsonWriter w, SimObject o)
+    {
+        List<Collider>? shapes = null;
+        foreach (var c in o.Components)
+        {
+            if (c is TerrainCollider)
+            {
+                WarnTerrainCollider(o.Name);
+                continue;
+            }
+            if (c is Collider col) (shapes ??= new List<Collider>()).Add(col);
+        }
+        if (shapes == null) return;
+
+        if (shapes.Count == 1)
+        {
+            w.WritePropertyName("collider");
+            WriteColliderBody(w, shapes[0]);
+            return;
+        }
+        w.WriteStartArray("colliders");
+        foreach (var c in shapes) WriteColliderBody(w, c);
+        w.WriteEndArray();
+    }
+
+    private static void WriteColliderBody(Utf8JsonWriter w, Collider c)
+    {
+        w.WriteStartObject();
+        switch (c)
+        {
+            case BoxCollider b:
+                w.WriteString("shape", "box");
+                SceneJson.WriteVec3(w, "size", b.Size);
+                break;
+            case SphereCollider sp:
+                w.WriteString("shape", "sphere");
+                w.WriteNumber("radius", sp.Radius);
+                break;
+            case CapsuleCollider cap:
+                w.WriteString("shape", "capsule");
+                w.WriteNumber("radius", cap.Radius);
+                w.WriteNumber("height", cap.Height);
+                break;
+        }
+        // Defaults stay out of the file, so a scene of plain solid boxes reads as geometry rather
+        // than as a wall of layer/trigger/enabled noise.
+        if (c.Center != Vector3.Zero) SceneJson.WriteVec3(w, "center", c.Center);
+        if (c.Layer != 1) w.WriteNumber("layer", c.Layer);
+        if (c.IsTrigger) w.WriteBoolean("isTrigger", true);
+        if (!c.Enabled) w.WriteBoolean("enabled", false);
         w.WriteEndObject();
     }
 
@@ -265,7 +345,7 @@ public static class SceneSerializer
         // Warn once per type about anything we'd silently drop, rather than losing it quietly.
         foreach (var c in o.Components)
             if (c is not MeshComponent && c is not LightComponent && c is not BillboardComponent
-                && c is not LodComponent && c is not SkinnedMeshComponent
+                && c is not LodComponent && c is not SkinnedMeshComponent && c is not Collider
                 && !ComponentManager.TryGetTypeName(c, out _))
                 WarnUnserialisable(c.GetType(), "component");
         foreach (var b in o.Behaviors)
@@ -291,6 +371,16 @@ public static class SceneSerializer
     }
 
     private static readonly HashSet<Type> _warned = new();
+
+    /// <summary>Once per run, not once per node: a terrain typically carries one collider, but a
+    /// bake of a large generated world would otherwise print this for every node it walks.</summary>
+    private static void WarnTerrainCollider(string node)
+    {
+        if (!_warned.Add(typeof(TerrainCollider))) return;
+        Console.Error.WriteLine(
+            $"[scene] node '{node}': TerrainCollider is not saved — it wraps generated terrain, " +
+            "so re-attach it in code after loading the scene.");
+    }
 
     private static void WarnUnserialisable(Type t, string kind)
     {
@@ -552,6 +642,7 @@ public static class SceneSerializer
         }
 
         if (e.TryGetProperty("lod", out var lodEl)) ReadLod(lodEl, obj, name);
+        ReadColliders(e, obj, name);
         if (e.TryGetProperty("light", out var lightEl)) ReadLight(lightEl, obj);
         if (e.TryGetProperty("billboard", out var bbEl)) ReadBillboard(bbEl, obj, name);
 
@@ -634,6 +725,51 @@ public static class SceneSerializer
             return;
         }
         obj.AddComponent(lod);
+    }
+
+    /// <summary>Accepts both spellings a node can carry: <c>"collider"</c> for the single-shape
+    /// case and <c>"colliders"</c> for a compound body. Both on one node is legal and additive —
+    /// there is no reason to make that an error when the meaning is obvious.</summary>
+    private static void ReadColliders(JsonElement e, SimObject obj, string node)
+    {
+        if (e.TryGetProperty("collider", out var one) && one.ValueKind == JsonValueKind.Object)
+            AddCollider(one, obj, node);
+
+        if (e.TryGetProperty("colliders", out var many) && many.ValueKind == JsonValueKind.Array)
+            foreach (var c in many.EnumerateArray())
+                if (c.ValueKind == JsonValueKind.Object) AddCollider(c, obj, node);
+    }
+
+    private static void AddCollider(JsonElement e, SimObject obj, string node)
+    {
+        string shape = e.TryGetProperty("shape", out var sh) ? sh.GetString() ?? "" : "";
+        Collider? col = shape.ToLowerInvariant() switch
+        {
+            "box" => new BoxCollider(
+                e.TryGetProperty("size", out var sz) ? SceneJson.ParseVec3(sz, Vector3.One) : Vector3.One),
+            "sphere" => new SphereCollider(
+                e.TryGetProperty("radius", out var sr) ? sr.GetSingle() : 0.5f),
+            "capsule" => new CapsuleCollider(
+                e.TryGetProperty("radius", out var cr) ? cr.GetSingle() : 0.3f,
+                e.TryGetProperty("height", out var ch) ? ch.GetSingle() : 1.8f),
+            _ => null,
+        };
+
+        if (col == null)
+        {
+            // Naming the shapes that DO work turns a typo into a one-read fix. "terrain" gets its
+            // own line because it is a shape the engine has, just not one a file can carry.
+            Console.Error.WriteLine(shape.Equals("terrain", StringComparison.OrdinalIgnoreCase)
+                ? $"[scene] node '{node}': terrain colliders are attached in code, not in the scene file; skipped."
+                : $"[scene] node '{node}': unknown collider shape '{shape}' (expected box, sphere or capsule); skipped.");
+            return;
+        }
+
+        if (e.TryGetProperty("center", out var ce)) col.Center = SceneJson.ParseVec3(ce, Vector3.Zero);
+        if (e.TryGetProperty("layer", out var la) && la.TryGetInt32(out var layer)) col.Layer = layer;
+        if (e.TryGetProperty("isTrigger", out var tr)) col.IsTrigger = tr.ValueKind == JsonValueKind.True;
+        if (e.TryGetProperty("enabled", out var en)) col.Enabled = en.ValueKind != JsonValueKind.False;
+        obj.AddComponent(col);
     }
 
     private static void ReadLight(JsonElement e, SimObject obj)

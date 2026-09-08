@@ -34,6 +34,10 @@ public sealed class HotReloadableUi
     public Panel Container { get; }
 
     private readonly string _path;
+    /// <summary>Absolute path, resolved once so the panel loads regardless of working directory.
+    /// Empty when the file is in neither probe location.</summary>
+    private readonly string _full;
+    private readonly bool _found;
     private readonly Font? _font;
     private readonly UiEventRegistry _events;
     private FileSystemWatcher? _watcher;
@@ -43,6 +47,7 @@ public sealed class HotReloadableUi
     public HotReloadableUi(string path, Font? font, UiEventRegistry events)
     {
         _path = path;
+        _found = ContentPath.TryResolve(path, out _full);
         _font = font;
         _events = events;
         // Non-pickable transparent container — the loaded root sits
@@ -55,6 +60,17 @@ public sealed class HotReloadableUi
         Container = new Panel(0, 0, 0, 0) { Pickable = false };
         Container.AnchorTo(Anchor.StretchAll);
         Container.NoClip();
+
+        // A missing file has exactly one cause and deserves exactly one message. Reporting it
+        // here means Reload() and TryStartWatcher() are never both asked to fail on it — the old
+        // code let each print its own error, so one absent panel logged two lines and only the
+        // first named the real problem.
+        if (!_found)
+        {
+            System.Console.Error.WriteLine(
+                $"[ui] {_path} not found — panel will be empty. Looked in {ContentPath.DescribeSearch(_path)}");
+            return;
+        }
 
         Reload();
         TryStartWatcher();
@@ -114,7 +130,7 @@ public sealed class HotReloadableUi
         _lastReload = DateTime.UtcNow;
         try
         {
-            var freshRoot = UiLoader.Load(_path, _font, _events);
+            var freshRoot = UiLoader.Load(_full, _font, _events);
             Container.Children.Clear();
             Container.Add(freshRoot);
             System.Console.WriteLine($"[ui] reloaded {_path}");
@@ -131,8 +147,8 @@ public sealed class HotReloadableUi
     {
         try
         {
-            var dir  = Path.GetDirectoryName(Path.GetFullPath(_path));
-            var file = Path.GetFileName(_path);
+            var dir  = Path.GetDirectoryName(Path.GetFullPath(_full));
+            var file = Path.GetFileName(_full);
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(file)) return;
             _watcher = new FileSystemWatcher(dir, file)
             {

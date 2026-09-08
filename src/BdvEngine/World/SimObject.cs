@@ -107,6 +107,26 @@ public sealed class SimObject
         if (IsLoaded) component.Load();
     }
 
+    /// <summary>Detach a component and unload it. Returns false if it wasn't attached.
+    ///
+    /// <para>Unload is what releases the component's hold on shared resources — a
+    /// <see cref="MeshComponent"/> flushes its material reference, a <see cref="Collider"/> leaves
+    /// the physics world. Removing without it would leak both.</para></summary>
+    public bool RemoveComponent(IComponent component)
+    {
+        if (!_components.Remove(component)) return false;
+        component.Unload();
+        return true;
+    }
+
+    /// <summary>Detach the first component of type <typeparamref name="T"/>, if any.</summary>
+    public T? RemoveComponent<T>() where T : class, IComponent
+    {
+        var c = GetComponent<T>();
+        if (c != null) RemoveComponent(c);
+        return c;
+    }
+
     public void AddBehavior(IBehavior behavior)
     {
         _behaviors.Add(behavior);
@@ -119,6 +139,24 @@ public sealed class SimObject
         IsLoaded = true;
         foreach (var c in _components) c.Load();
         foreach (var ch in _children) ch.Load();
+    }
+
+    /// <summary>
+    /// Mirror of <see cref="Load"/>: unload this object's components and its whole subtree.
+    ///
+    /// <para>Detaching an object from the scene graph does NOT do this on its own, because
+    /// reparenting is a normal operation and must not release resources. Call it when an object is
+    /// genuinely going away — a level swap, or a scene reload — or its components keep whatever
+    /// they registered: a <see cref="Collider"/> stays in the <see cref="PhysicsWorld"/> and the
+    /// old level keeps colliding with the new one, and a <see cref="MeshComponent"/> holds its
+    /// material reference forever.</para>
+    /// </summary>
+    public void Unload()
+    {
+        if (!IsLoaded) return;
+        IsLoaded = false;
+        foreach (var ch in _children) ch.Unload();
+        foreach (var c in _components) c.Unload();
     }
 
     public void Update(double deltaTime)

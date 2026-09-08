@@ -129,6 +129,10 @@ public sealed class HotReloadableMaterials
             var dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(Path));
             var file = System.IO.Path.GetFileName(Path);
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(file)) return;
+            // No directory means the file is missing, which Reload() has already reported. A
+            // watcher on a path that doesn't exist can never fire, so throwing here would only
+            // add a second line about the same single cause.
+            if (!Directory.Exists(dir)) return;
             _watcher = new FileSystemWatcher(dir, file)
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.CreationTime | NotifyFilters.Size,

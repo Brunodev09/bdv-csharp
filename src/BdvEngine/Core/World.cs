@@ -89,6 +89,11 @@ public sealed class World
         var container = SceneSerializer.Load(this, path, () => _nextId++);
         Scene.AddObject(container);
         container.Load();   // Engine calls Scene.Load() once, after Init — later subtrees load here.
+        // World matrices are normally produced by Update, which means everything derived from a
+        // transform — collider bounds above all — reads as identity between here and the first
+        // tick. Bake now so the scene this returns is immediately queryable rather than only
+        // looking right one frame later.
+        container.RebakeMatrices();
         LoadedScenePath = path;
         LoadedSceneRoot = container;
         return container;
@@ -98,10 +103,16 @@ public sealed class World
     /// the hot-reload swap. Returns the new container; the old one is detached.</summary>
     public SimObject ReloadScene(string path, SimObject previous)
     {
+        // Load the replacement BEFORE unloading what it replaces: the two scenes share materials,
+        // and unloading first would drop the last reference to one the new scene is about to ask
+        // for. Unloading at all is what keeps the old level's colliders from staying registered in
+        // the PhysicsWorld — detaching a node does not release what its components hold.
         var fresh = SceneSerializer.Load(this, path, () => _nextId++);
         Scene.RemoveObject(previous);
+        previous.Unload();
         Scene.AddObject(fresh);
         fresh.Load();
+        fresh.RebakeMatrices();   // same reason as LoadScene
         LoadedScenePath = path;
         LoadedSceneRoot = fresh;
         return fresh;

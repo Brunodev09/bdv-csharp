@@ -20,6 +20,20 @@ public sealed class Mesh : IDisposable
     /// <summary>Floats per vertex in THIS mesh — 8 static, 16 skinned.</summary>
     public int Stride { get; }
 
+    /// <summary>Number of vertices.</summary>
+    public int VertexCount => _vertexCount;
+
+    /// <summary>Raw interleaved vertex data, laid out <see cref="Stride"/> floats per vertex.
+    /// Read-only, for tools that need to inspect or rebuild geometry — an auto-rigger reading
+    /// positions, a mesh analyser, an exporter.</summary>
+    public ReadOnlySpan<float> VertexData => _vertexData;
+
+    /// <summary>16-bit indices, or empty when this mesh uses the 32-bit path.</summary>
+    public ReadOnlySpan<ushort> Indices16 => _indexData ?? ReadOnlySpan<ushort>.Empty;
+
+    /// <summary>32-bit indices, or empty when this mesh uses the 16-bit path.</summary>
+    public ReadOnlySpan<uint> Indices32 => _indexData32 ?? ReadOnlySpan<uint>.Empty;
+
     /// <summary>Local-space axis-aligned bounds (from the vertex positions) — used by ray picking.</summary>
     public Vector3 BoundsMin { get; private set; }
     public Vector3 BoundsMax { get; private set; }
