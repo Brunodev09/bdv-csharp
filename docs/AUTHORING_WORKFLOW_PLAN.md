@@ -1,7 +1,7 @@
 # Authoring Workflow Plan — "Why Unity is easier, and how we get there"
 
-**Status:** Phases 1–3 landed (see §6), plus §9's #1 blocker (skinned animation).
-Phase 4 is draft.
+**Status:** Phases 1–3 landed (see §6), plus §9's #1 and #2 blockers (skinned animation,
+shadows). Phase 4 is draft.
 **Follows:** `UNIFIED_3D_PLAN.md` (Phases 0–8, landed).
 **Goal:** Close the gap between "BdvEngine can render a 3D scene" and "BdvEngine is a nicer
 place to *build* a 3D game than Unity" — for a solo author working with an AI agent.
@@ -493,9 +493,25 @@ Separate from workflow. Ranked by whether they block shipping a 3D game.
    silent corruption); morph targets and CUBICSPLINE are out (the latter parses and samples as
    LINEAR). No animation state-machine *graph* — a `switch` in game code diffs and reviews better,
    and an agent can write it.
-2. **Shadows.** `grep -ril shadow` hits only `Graphics/Lighting.cs` and two sprite shaders — the
-   *2D* occluder system. The 3D path has none. Biggest single visual-quality gap: nothing is
-   grounded. Start with one shadow map for the sun.
+2. ~~**Shadows.**~~ ✅ **LANDED.** A single directional (sun) shadow map: `Graphics/ShadowMap.cs`
+   (depth FBO, texel-snapped light frustum, `ShadowSettings` on `WorldEnvironment`),
+   `Core/DepthShader.cs` (static + skinned depth-only), a shadow pass in `MeshRenderer`, and PCF
+   sampling added to the Lit and PBR fragment stages — which the skinned shaders share, so
+   characters cast and receive for free.
+
+   The lookup reconstructs light-space position from `v_fragPos`, which the fragments already had,
+   so **no vertex shader changed** and the static render stayed pixel-identical.
+
+   Verified by `sketches/shadow_test.cs` as a pixel diff of shadows-on vs shadows-off: 11,300
+   samples got darker, **zero got brighter**, and the sky was untouched. The skinned capsule casts
+   a *bent* shadow, which is what proves the depth pass poses the mesh rather than casting its
+   bind pose. Point lights don't cast (cube maps, much larger budget).
+
+   **This surfaced a real pre-existing bug.** `Mesh.Plane`'s index winding disagreed with its
+   vertex normals on all four triangles, so the face you see from above carried a *downward*
+   normal and got zero contribution from an overhead sun. Every ground plane in the engine had
+   been rendering ambient-only — visible in this session's earlier screenshots, which I'd
+   misattributed to scene lighting. Fixed by flipping the winding.
 3. **3D collision + character controller.** `Utils/Collision.cs` is `RectRect`/`CircleCircle`/
    `LineRect` — 2D. `Behaviors/RigidBodyBehavior.cs` has `Vx, Vy` — 2D. No 3D collider, no
    capsule sweep, no move-and-slide, no triggers. The cost is visible: `ValheimGame` hand-rolls

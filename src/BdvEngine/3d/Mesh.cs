@@ -199,7 +199,11 @@ public sealed class Mesh : IDisposable
              h, 0, -h,  0, -1, 0,  1, 1,
             -h, 0, -h,  0, -1, 0,  0, 1,
         };
-        var idx = new ushort[] { 0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7 };
+        // Winding must agree with the vertex normals: every one of these four triangles used to
+        // wind the opposite way from the normal it carries, so the face you see from above carried
+        // a DOWNWARD normal and got zero contribution from an overhead sun. Every ground plane in
+        // the engine rendered ambient-only.
+        var idx = new ushort[] { 0, 2, 1, 0, 3, 2, 4, 6, 5, 4, 7, 6 };
         return new Mesh(v, idx) { Source = $"plane:{size.ToString(System.Globalization.CultureInfo.InvariantCulture)}" };
     }
 

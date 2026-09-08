@@ -25,11 +25,23 @@ public readonly struct FrameParams
     public readonly GpuLight[] Lights;
     public readonly int LightCount;
 
+    /// <summary>Sun shadow state. Only light 0 (the environment sun) is shadowed — see
+    /// <see cref="ShadowMap"/> for why point lights aren't.</summary>
+    public readonly bool ShadowsOn;
+    public readonly Matrix4x4 LightViewProj;
+    public readonly float ShadowBias, ShadowTexel, ShadowSoftness, ShadowStrength;
+
     public FrameParams(Matrix4x4 proj, Matrix4x4 view, Vector3 viewPos, Vector3 ambient,
-                       GpuLight[] lights, int lightCount)
+                       GpuLight[] lights, int lightCount,
+                       bool shadowsOn = false, Matrix4x4 lightViewProj = default,
+                       float shadowBias = 0f, float shadowTexel = 0f,
+                       float shadowSoftness = 1f, float shadowStrength = 0.75f)
     {
         Proj = proj; View = view; ViewPos = viewPos; Ambient = ambient;
         Lights = lights; LightCount = lightCount;
+        ShadowsOn = shadowsOn; LightViewProj = lightViewProj;
+        ShadowBias = shadowBias; ShadowTexel = shadowTexel;
+        ShadowSoftness = shadowSoftness; ShadowStrength = shadowStrength;
     }
 }
 
@@ -50,6 +62,19 @@ public abstract class MeshShader : Shader
 
     /// <summary>Bind per-object + per-material uniforms and any textures, then the caller draws.</summary>
     public abstract void SetObject(in Matrix4x4 model, in Matrix4x4 normalMatrix, Material material);
+
+    /// <summary>Shared helper for lit families: bind the sun shadow map and its parameters.</summary>
+    protected void SetShadow(in FrameParams f)
+    {
+        SetUniform("u_shadowOn", f.ShadowsOn ? 1 : 0);
+        if (!f.ShadowsOn) return;
+        SetUniform("u_lightViewProj", f.LightViewProj);
+        SetUniform("u_shadowMap", ShadowMap.ShadowTextureUnit);
+        SetUniform("u_shadowBias", f.ShadowBias);
+        SetUniform("u_shadowTexel", f.ShadowTexel);
+        SetUniform("u_shadowSoft", f.ShadowSoftness);
+        SetUniform("u_shadowStrength", f.ShadowStrength);
+    }
 
     /// <summary>Shared helper for lit families: bind ambient, view position and the light array.</summary>
     protected void SetLights(in FrameParams f)

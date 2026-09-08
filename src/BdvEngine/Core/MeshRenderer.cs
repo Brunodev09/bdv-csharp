@@ -19,6 +19,9 @@ internal sealed class MeshRenderer : IDisposable
     private readonly PbrMeshShader _pbr = new();
     private readonly SkinnedLitMeshShader _skinnedLit = new();
     private readonly SkinnedPbrMeshShader _skinnedPbr = new();
+    private readonly DepthShader _depth = new();
+    private readonly SkinnedDepthShader _skinnedDepth = new();
+    private ShadowMap? _shadowMap;
     private readonly BillboardShader _billboard = new();
     private readonly Mesh _quad = UnitQuad();
 
@@ -72,9 +75,27 @@ internal sealed class MeshRenderer : IDisposable
 
         Collect(scene.Root);
 
+        // ── shadow pass: render depth from the sun before anything shades ──
+        var shadowCfg = env.Shadows;
+        bool shadows = shadowCfg.Enabled && (_queue.Count > 0 || _skinned.Count > 0);
+        if (shadows)
+        {
+            _shadowMap ??= new ShadowMap(shadowCfg.Resolution);
+            _shadowMap.Resize(shadowCfg.Resolution);
+            RenderShadowPass(cam, env);
+        }
+
         var frame = new FrameParams(
             cam.ProjectionMatrix(vw, vh), cam.ViewMatrix, cam.Position,
-            env.Ambient, _lights, _lightCount);
+            env.Ambient, _lights, _lightCount,
+            shadowsOn: shadows,
+            lightViewProj: _shadowMap?.LightViewProj ?? Matrix4x4.Identity,
+            shadowBias: shadowCfg.Bias,
+            shadowTexel: _shadowMap != null ? 1f / _shadowMap.Resolution : 0f,
+            shadowSoftness: shadowCfg.SoftnessTexels,
+            shadowStrength: shadowCfg.Strength);
+
+        if (shadows) _shadowMap!.BindForReading();
 
         // Group draws by shader so each program is bound (and lit) once.
         foreach (var list in _groups.Values) list.Clear();
@@ -103,6 +124,53 @@ internal sealed class MeshRenderer : IDisposable
 
         DrawSkinned(frame);
         DrawBillboards(frame, cam);
+    }
+
+    /// <summary>
+    /// Depth-only pass from the sun's point of view, filling the shadow map. Runs over the same
+    /// two queues the main pass uses, so anything that draws also casts — no separate opt-in to
+    /// forget.
+    ///
+    /// <para>The light frustum is centred on the camera's target rather than the whole scene: a box
+    /// big enough for an island would waste nearly all its texels on geometry nobody is looking at.
+    /// The trade is that shadows stop at <see cref="ShadowSettings.Distance"/> from the focus.</para>
+    /// </summary>
+    private void RenderShadowPass(Camera cam, WorldEnvironment env)
+    {
+        var map = _shadowMap!;
+        map.BeginPass(cam.Target, env.Sun.Direction, env.Shadows.Distance);
+
+        if (_queue.Count > 0)
+        {
+            _depth.Use();
+            _depth.SetFrame(map.LightViewProj);
+            foreach (var (world, mesh, mat) in _queue)
+            {
+                // A double-sided material has no back faces to hide acne behind, so the front-face
+                // culling in BeginPass would drop it out of the shadow map entirely.
+                if (mat.DoubleSided) _gl.Disable(EnableCap.CullFace);
+                else _gl.Enable(EnableCap.CullFace);
+                _depth.SetObject(world);
+                mesh.Draw();
+            }
+        }
+
+        if (_skinned.Count > 0)
+        {
+            _skinnedDepth.Use();
+            _skinnedDepth.SetFrame(map.LightViewProj);
+            foreach (var (world, smc) in _skinned)
+            {
+                if (smc.Material.DoubleSided) _gl.Disable(EnableCap.CullFace);
+                else _gl.Enable(EnableCap.CullFace);
+                smc.Skin.UpdatePalette(world, _frame);
+                _skinnedDepth.SetJoints(smc.Skin.JointMatrices, smc.Skin.JointCount);
+                _skinnedDepth.SetObject(world);
+                smc.Mesh.Draw();
+            }
+        }
+
+        map.EndPass();
     }
 
     /// <summary>Skinned meshes. Grouped by shader like the static lane, but each draw also binds
@@ -212,6 +280,9 @@ internal sealed class MeshRenderer : IDisposable
         _pbr.Dispose();
         _skinnedLit.Dispose();
         _skinnedPbr.Dispose();
+        _depth.Dispose();
+        _skinnedDepth.Dispose();
+        _shadowMap?.Dispose();
         _billboard.Dispose();
         _quad.Dispose();
     }

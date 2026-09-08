@@ -15,6 +15,7 @@ public sealed class PbrMeshShader : MeshShader
         SetUniform("u_proj", f.Proj);
         SetUniform("u_view", f.View);
         SetLights(f);
+        SetShadow(f);
     }
 
     public override void SetObject(in Matrix4x4 model, in Matrix4x4 normalMatrix, Material material)
@@ -61,6 +62,36 @@ uniform float u_lightRange[MAX_LIGHTS];
 out vec4 fragColor;
 
 const float PI = 3.14159265359;
+
+uniform int u_shadowOn;
+uniform mat4 u_lightViewProj;
+uniform sampler2D u_shadowMap;
+uniform float u_shadowBias, u_shadowTexel, u_shadowSoft, u_shadowStrength;
+
+// Returns 1.0 in full light, (1 - strength) in full shadow. Only the sun casts.
+float sunVisibility(vec3 fragPos, vec3 N, vec3 L) {
+    if (u_shadowOn == 0) return 1.0;
+    vec4 lp = u_lightViewProj * vec4(fragPos, 1.0);
+    vec3 pr = lp.xyz / lp.w;
+    pr = pr * 0.5 + 0.5;
+    if (pr.z > 1.0) return 1.0;                 // beyond the light's far plane
+
+    // Slope-scaled bias: surfaces edge-on to the sun span more depth per texel and need more
+    // slack, while surfaces facing it need almost none (too much there causes peter-panning).
+    float ndl = clamp(dot(N, L), 0.0, 1.0);
+    float bias = max(u_shadowBias * (1.0 - ndl), u_shadowBias * 0.15);
+
+    float lit = 0.0;
+    for (int x = -1; x <= 1; ++x)
+        for (int y = -1; y <= 1; ++y) {
+            vec2 off = vec2(float(x), float(y)) * u_shadowTexel * u_shadowSoft;
+            float d = texture(u_shadowMap, pr.xy + off).r;
+            lit += (pr.z - bias) > d ? 0.0 : 1.0;
+        }
+    lit /= 9.0;
+    return mix(1.0 - u_shadowStrength, 1.0, lit);
+}
+
 
 float distributionGGX(vec3 N, vec3 H, float rough) {
     float a = rough * rough;
@@ -112,7 +143,8 @@ void main() {
         vec3 spec = (NDF * G * F) / max(4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0), 1e-4);
         vec3 kd = (vec3(1.0) - F) * (1.0 - u_metallic);
         float ndl = max(dot(N, L), 0.0);
-        Lo += (kd * albedo / PI + spec) * radiance * ndl;
+        float vis = (i == 0) ? sunVisibility(v_fragPos, N, L) : 1.0;
+        Lo += (kd * albedo / PI + spec) * radiance * ndl * vis;
     }
 
     vec3 ambient = u_ambientColor * albedo;

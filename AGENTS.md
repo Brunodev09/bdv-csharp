@@ -250,6 +250,32 @@ code and let the file hold what you place around them.
 
 ---
 
+## Shadows
+
+The sun casts shadows by default — static meshes, skinned characters, and prefab instances alike.
+Nothing to opt into; anything that draws also casts.
+
+```csharp
+var sh = w.Environment.Shadows;
+sh.Enabled  = true;     // off costs nothing: no depth pass, no extra samplers
+sh.Distance = 45f;      // half-extent of the shadowed area around the camera's target
+sh.Resolution = 2048;   // shadow map edge; 4096 for sharper edges over a big Distance
+sh.Bias = 0.0016f;      // raise to kill acne (stripes), lower if shadows detach from feet
+sh.Strength = 0.75f;    // 1 = pitch black in shadow, 0 = no shadow at all
+sh.SoftnessTexels = 1.2f;
+```
+
+**`Distance` is the dial that matters.** It trades coverage for sharpness: 2048 over `Distance: 40`
+gives ~2cm texels; stretching to 400 for a whole island makes them 20cm and edges go chunky.
+Shadows simply stop beyond it. Size it to what the camera actually sees, not to the world.
+
+**Only the sun casts.** Point lights don't — that needs cube maps and a much larger budget.
+
+**Two symptoms and their fixes:** stripey self-shadowing (*acne*) means `Bias` is too low; a shadow
+detached from its object's feet (*peter-panning*) means it's too high.
+
+---
+
 ## Skinned animation (rigged `.glb`)
 
 Model → rig → animate in Blender → export `.glb` → it loads, deforms and plays. The loader reads

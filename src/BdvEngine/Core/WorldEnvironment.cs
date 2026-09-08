@@ -29,4 +29,8 @@ public sealed class WorldEnvironment
     public Vector3 Sky = new(0.10f, 0.12f, 0.18f);
     public Vector3 Ambient = new(0.28f, 0.28f, 0.34f);
     public DirectionalLight Sun = new(new Vector3(-0.5f, -1f, -0.35f));
+
+    /// <summary>Sun shadow settings. On by default — an unshadowed 3D scene reads as floating
+    /// geometry, which is the single biggest thing separating "engine demo" from "game".</summary>
+    public ShadowSettings Shadows { get; } = new();
 }
