@@ -599,8 +599,47 @@ which is precisely the shape the generator hunts for, so without that check it l
 through walls. At most one link is kept per polygon pair, or a long ledge facing another produces
 one per sample.
 
-**Not covered**: dynamic obstacle carving, local avoidance between agents, area costs, and partial
-paths toward an unreachable goal — `FindPath` fails outright rather than returning its best effort,
+### Local avoidance — crowds that don't walk through each other
+
+On by default for every `NavAgent`. Each agent solves its path in isolation, so without this a
+crowd interpenetrates freely.
+
+```csharp
+agent.Avoidance = true;      // default
+agent.Radius = 0.35f;        // match the character's collider
+agent.YieldsToOthers = true; // false for a player or scripted mover: others take the full dodge
+
+AvoidanceWorld.NeighbourDistance = 6f;   // how far to look
+AvoidanceWorld.MaxNeighbours = 8;        // nearest N dominate; the rest are cost without effect
+AvoidanceWorld.TimeHorizon = 2f;         // seconds of lookahead
+```
+
+It's **ORCA** (reciprocal velocity obstacles), not repulsion forces. A repulsion force is three
+lines and fails exactly where avoidance matters: two agents head-on push straight back along the
+line joining them, so they slow, stop and jitter instead of stepping aside. ORCA is reciprocal —
+each agent assumes the other takes half the correction — so they pick opposite sides and pass
+smoothly with no communication.
+
+Avoidance adjusts the *velocity*, then the `CharacterController` resolves walls and slopes as
+usual. Agents mid-link drop out of it: they're airborne on a fixed trajectory, and steering them
+would break the jump.
+
+**`AvoidanceWorld.SymmetryBreaking` exists for a real reason.** ORCA is deterministic and
+reciprocal, so perfectly symmetric situations produce perfectly symmetric answers — twelve agents
+ringed around a point, all crossing the middle, each compute the mirror of their neighbour's
+solution and the crowd locks solid, correctly avoiding each other forever without progress. That
+exact case deadlocked at 0 of 12 arrived, none overlapping. A tiny per-agent nudge, derived from
+registry slot so it stays reproducible, breaks the tie. Set it to 0 only if you want exact
+symmetry.
+
+Measured on the gate's 12-agent ring crossing: closest approach **0.00m → 0.70m** (bodies are
+0.70m combined), overlapping steps **61 → 0**, and the crowd clears in **1.29x** the time of
+walking straight through.
+
+**Not covered**: avoidance of static obstacles (the navmesh and the controller handle those),
+crowd density fields, formation movement.
+
+**Not covered**: dynamic obstacle carving, area costs, and partial paths toward an unreachable goal — `FindPath` fails outright rather than returning its best effort,
 which is deliberate: a pathfinder that quietly approximates sends agents walking confidently into
 walls.
 
@@ -1043,6 +1082,7 @@ dotnet run tools/check_particles.cs   # cost is per system, off-screen culled
 dotnet run tools/check_postfx.cs      # each post-fx knob does its own job
 dotnet run tools/check_audio3d.cs     # listener, positions, attenuation (MAKES NOISE)
 dotnet run tools/check_navmesh.cs     # bakes from collision, routes around geometry
+dotnet run tools/check_avoidance.cs   # a crowd crosses itself without touching
 ```
 
 Shared plumbing lives in `tools/GateKit/` — spawning a sketch, pulling numbers out of its output,

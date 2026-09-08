@@ -19,7 +19,7 @@ namespace BdvEngine;
 /// if (agent.Arrived) { /* ... */ }
 /// </code>
 /// </summary>
-public sealed class NavAgent : BaseComponent
+public sealed class NavAgent : BaseComponent, IAvoidanceAgent
 {
     private readonly NavPath _path = new();
     private int _index;
@@ -29,6 +29,24 @@ public sealed class NavAgent : BaseComponent
     private NavLink? _link;
     private Vector3 _linkFrom, _linkTo;
     private float _linkT;
+
+    // ── avoidance ──
+    private readonly List<OrcaNeighbour> _neighbours = new();
+    private readonly List<OrcaLine> _lines = new();
+    private Vector3 _velocity;
+
+    /// <summary>Steer around other agents instead of walking through them. Costs one distance check
+    /// per registered agent per frame plus a small solve; turn it off for agents that are alone or
+    /// scripted.</summary>
+    public bool Avoidance = true;
+
+    /// <summary>Body radius used by the avoidance solver. Should match the character's collider —
+    /// too small and agents clip, too large and a crowd deadlocks in a doorway that would fit.</summary>
+    [Range(0.05f, 5f)] public float Radius = 0.35f;
+
+    /// <summary>False makes other agents take the full correction rather than assuming this one
+    /// yields half. Right for a player or a scripted mover that ignores the crowd.</summary>
+    public bool YieldsToOthers = true;
 
     [Range(0.1f, 30f)] public float Speed = 3f;
 
@@ -75,6 +93,21 @@ public sealed class NavAgent : BaseComponent
 
     public NavAgent(NavMesh? mesh = null) : base(new NavAgentData()) => _mesh = mesh;
 
+    // ── IAvoidanceAgent ─────────────────────────────────────────────────────
+    public Vector3 AvoidancePosition => _owner?.WorldMatrix.Translation ?? Vector3.Zero;
+    public Vector3 AvoidanceVelocity => _velocity;
+    public float AvoidanceRadius => Radius;
+    public bool AvoidanceReciprocal => YieldsToOthers;
+
+    /// <summary>Mid-link agents drop out of avoidance: they are airborne on a fixed trajectory, and
+    /// steering them would either break the jump or make everyone else dodge a body that is not
+    /// going to deviate anyway.</summary>
+    public bool AvoidanceActive => Avoidance && _link == null && !Arrived;
+
+    public override void Load() => AvoidanceWorld.Register(this);
+
+    public override void Unload() => AvoidanceWorld.Unregister(this);
+
     /// <summary>Path to a world position. Returns false (and sets <see cref="PathFailed"/>) when
     /// there is no route, leaving the agent where it is rather than drifting toward an
     /// unreachable point.</summary>
@@ -106,6 +139,7 @@ public sealed class NavAgent : BaseComponent
         _path.Clear();
         _index = 0;
         _link = null;
+        _velocity = Vector3.Zero;
         Arrived = true;
     }
 
@@ -154,11 +188,25 @@ public sealed class NavAgent : BaseComponent
         float speed = Speed;
         if (last) speed = MathF.Min(speed, MathF.Max(distance, 0.01f) / MathF.Max(dt, 1e-4f));
 
-        var controller = _owner.GetComponent<CharacterController>();
-        if (controller != null) controller.Move(direction * speed, deltaTime);
-        else _owner.Transform.Position += direction * speed * dt;
+        var desired = direction * speed;
 
-        if (TurnSpeed > 0f) FaceAlong(direction, dt);
+        // Avoidance adjusts the velocity we WANT into one that is also safe. Doing it here, on the
+        // velocity rather than on the position, is what keeps it compatible with the character
+        // controller: the controller still resolves walls and slopes afterwards.
+        if (Avoidance)
+            desired = AvoidanceWorld.Steer(this, desired, Speed, MathF.Max(dt, 1e-4f),
+                                           _neighbours, _lines);
+
+        _velocity = desired;
+
+        var controller = _owner.GetComponent<CharacterController>();
+        if (controller != null) controller.Move(desired, deltaTime);
+        else _owner.Transform.Position += desired * dt;
+
+        // Face where we are actually going, not where we wanted to: an agent that stares at its
+        // goal while side-stepping around someone reads as broken.
+        var facing = desired.LengthSquared() > 1e-6f ? Vector3.Normalize(desired) : direction;
+        if (TurnSpeed > 0f) FaceAlong(facing, dt);
     }
 
     private void BeginLink(NavLink link, Vector3 from, Vector3 to)
@@ -186,9 +234,12 @@ public sealed class NavAgent : BaseComponent
         float span = MathF.Max(Vector3.Distance(_linkFrom, _linkTo), 1e-4f);
         _linkT += MathF.Max(LinkSpeed, 0.01f) * dt / span;
 
+        _velocity = (_linkTo - _linkFrom) * (MathF.Max(LinkSpeed, 0.01f) / span);
+
         if (_linkT >= 1f)
         {
             _owner.Transform.Position = _linkTo;
+            _velocity = Vector3.Zero;
             _link = null;
             _index++;
             if (_index >= _path.Count) Arrived = true;
