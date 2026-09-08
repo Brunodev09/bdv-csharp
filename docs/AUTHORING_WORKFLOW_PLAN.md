@@ -615,7 +615,21 @@ Separate from workflow. Ranked by whether they block shipping a 3D game.
 
 3D particles (`Graphics/ParticleEmitter.cs` is 2D), post-processing on the 3D path
 (`Graphics/PostFx/Bloom.cs` is 2D screen-space), spatialised audio (`Audio/AudioManager.cs` is
-stereo pan only), navmesh/pathfinding (nothing), LOD, input action maps.
+stereo pan only), navmesh/pathfinding (nothing), input action maps.
+
+~~LOD~~ ✅ **LANDED.** `3d/LodComponent.cs` swaps meshes by distance and culls past a range; the
+renderer resolves the level during its scene walk and pushes the result into the ordinary draw
+queue, so culling, instancing, transparency and shadows all apply unchanged and same-level objects
+still batch. Thresholds are per unit of object scale, so one setting serves a forest of varied
+sizes. `SimObject.Visible` landed alongside it for hiding whole subtrees.
+
+Verified by `tools/check_lod.py`: 496k → 104k vertices (79% fewer) across a 180-canopy corridor,
+0.18% of the frame changed, and **zero change in the near half** — which is the assertion that
+matters, since a whole-frame average would hide an over-aggressive threshold.
+
+Not applied to the Valheim trees yet: those canopies come from prefab instances, and swapping their
+`MeshComponent` for a `LodComponent` needs either LOD in the scene format or a
+`SimObject.RemoveComponent`, neither of which exists.
 
 ### Explicitly not doing
 

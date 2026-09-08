@@ -402,6 +402,43 @@ debug helpers and UI-ish 3D, which shouldn't dissolve into the distance.
 
 ---
 
+## LOD
+
+Swap a mesh for a cheaper one with distance, and drop it entirely past a cull range. Use in place
+of `MeshComponent` on anything you place a lot of.
+
+```csharp
+var lod = new LodComponent { CullDistance = 200f };
+lod.Add(Primitives.Sphere(24, 16).Mesh, "leaf", within: 25f);   // near, 425 verts
+lod.Add(Primitives.Sphere(10,  7).Mesh, "leaf", within: 60f);   // mid,   88
+lod.Add(Primitives.Sphere( 5,  4).Mesh, "leaf", within: 150f);  // far,   30
+canopy.AddComponent(lod);
+
+lod.CurrentLevel;   // which level it picked last frame, -1 = culled
+```
+
+**Thresholds are PER UNIT OF SCALE.** Every distance is multiplied by the object's world scale, so
+`within: 25` means 25 units for a scale-1 object and 65 for one scaled 2.6×. That is what lets one
+setting serve a forest of varied sizes, but the numbers depend on how your meshes are scaled — in a
+scene where everything is scale 1 they're plain distances. Getting this wrong is the most likely
+reason a LOD setup does nothing.
+
+The level is resolved during the scene walk and pushed into the ordinary draw queue, so **frustum
+culling, instancing, transparency and shadows all work on the result** — and every object that
+picked the same level batches into one call.
+
+Switching pops; the mitigation is `Hysteresis` (default 0.1), which stretches a level's range once
+it's active so an object on a boundary doesn't strobe. There's no cross-fade.
+
+Measured on a 180-canopy corridor: **496k → 104k vertices (79% fewer)**, with 0.18% of the frame
+changing and **nothing at all changing in the near half**.
+
+**`SimObject.Visible = false`** skips an object and its children entirely — the cheap way to hide a
+subtree (a closed door, an unused variant) without detaching it. Updates still run; hiding is not
+pausing.
+
+---
+
 ## Culling and instancing
 
 Both on by default; both change cost, never the picture.

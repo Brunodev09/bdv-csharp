@@ -102,7 +102,7 @@ internal sealed class MeshRenderer : IDisposable
         // sees are different sets: an object behind the camera still casts a shadow into view, so
         // culling the shadow pass with the camera's frustum would delete shadows that belong.
         _cullingEnabled = env.Culling;
-        Collect(scene.Root);
+        Collect(scene.Root, cam.Position);
 
         var camFrustum = new Frustum(cam.ViewMatrix * cam.ProjectionMatrix(vw, vh));
         _visible.Clear();
@@ -491,8 +491,12 @@ internal sealed class MeshRenderer : IDisposable
     }
 
     // Single walk: mesh components → draw queue, light components → light array.
-    private void Collect(SimObject o)
+    private void Collect(SimObject o, Vector3 camPos)
     {
+        // Hidden subtrees cost one test, not a walk. Lights inside them go too, which is what you
+        // want — a hidden lamp shouldn't still light the room.
+        if (!o.Visible) return;
+
         var comps = o.Components;
         for (int i = 0; i < comps.Count; i++)
         {
@@ -501,6 +505,18 @@ internal sealed class MeshRenderer : IDisposable
                 case MeshComponent mc:
                     _queue.Add((o.WorldMatrix, mc.Mesh, mc.Material));
                     break;
+                case LodComponent lod:
+                {
+                    // Resolve the level here and push the result as an ordinary draw, so frustum
+                    // culling, instancing, transparency and shadows all work on it unchanged — and
+                    // every instance that picked the same level batches into one call.
+                    var world = o.WorldMatrix;
+                    float dist = Vector3.Distance(camPos, world.Translation);
+                    float scale = MathF.Max(new Vector3(world.M11, world.M12, world.M13).Length(), 1e-4f);
+                    if (lod.Select(dist, scale, out var lodMesh, out var lodMat))
+                        _queue.Add((world, lodMesh, lodMat));
+                    break;
+                }
                 case SkinnedMeshComponent smc:
                     _skinned.Add((o.WorldMatrix, smc));
                     break;
@@ -513,7 +529,7 @@ internal sealed class MeshRenderer : IDisposable
             }
         }
         var ch = o.Children;
-        for (int i = 0; i < ch.Count; i++) Collect(ch[i]);
+        for (int i = 0; i < ch.Count; i++) Collect(ch[i], camPos);
     }
 
     /// <summary>Frustum test for one mesh under one transform. <paramref name="pad"/> grows the

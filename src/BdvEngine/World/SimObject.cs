@@ -43,6 +43,13 @@ public sealed class SimObject
     /// edits the asset shouldn't have.</summary>
     public void Unpack() { Source = null; SourceKind = AssetKind.None; }
 
+    /// <summary>When false this object AND its children are skipped by the renderer — the cheap way
+    /// to toggle a whole subtree (a closed door, an LOD group's unused variant, a debug overlay)
+    /// without detaching it from the scene and losing its place.
+    ///
+    /// <para>Updates still run: hiding something does not pause it. Detach it if you want that.</para></summary>
+    public bool Visible { get; set; } = true;
+
     public Transform Transform { get; } = new();
     public bool IsLoaded { get; private set; }
     public SimObject? Parent => _parent;
