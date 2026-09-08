@@ -304,6 +304,38 @@ colliders. Swap in a spatial hash when a profile says so; the query API won't ch
 
 ---
 
+## Culling and instancing
+
+Both on by default; both change cost, never the picture.
+
+```csharp
+w.Environment.Culling = true;     // skip what the camera (and the sun) can't see
+w.Environment.Instancing = true;  // collapse repeated (mesh, material) into one draw call
+```
+
+**Instancing needs a SHARED mesh.** Batching is by `(Mesh, Material)`, so two objects only merge
+if they hold the *same* `Mesh` instance. `Primitives.Cube()` and friends return a **shared** mesh
+per spec for exactly this reason — a loop calling them gets one GPU buffer and one draw call, not
+841 of each. `Mesh.Cube()` / `Mesh.Sphere()` / `Mesh.Plane()` still return a fresh, privately
+owned mesh when you want one (and `Primitives.ClearShared()` drops the cache).
+
+Prefabs and `.scene.json` share meshes automatically, so instanced content is the default there.
+
+Measured on the Valheim island (97 trees, 90 rocks, terrain, water, player): **770 -> 16 draw
+calls**. On a 202-pine prefab forest: **607 -> 8**.
+
+**What doesn't instance**, and falls back to one draw each: skinned meshes (each needs its own
+joint palette), materials with a `CustomShader` (their program has no per-instance attributes),
+and batches under 4 copies (below that, filling the buffer costs more than it saves).
+
+The camera and the sun cull with **separate frustums**. Culling the shadow pass with the camera's
+would delete shadows cast by objects behind you — which is most of them with a low sun.
+
+Skinned meshes are culled with padded bounds, because a mesh's stored bounds are its *bind* pose
+and a raised arm reaches past them.
+
+---
+
 ## Shadows
 
 The sun casts shadows by default — static meshes, skinned characters, and prefab instances alike.

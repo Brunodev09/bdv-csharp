@@ -45,6 +45,13 @@ public sealed class Mesh : IDisposable
     private uint _vbo;
     private uint _ibo;
     private bool _initialized;
+    private uint _instanceVbo;      // 0 until this mesh is first drawn instanced
+
+    /// <summary>Floats of per-instance data: a 4x4 model matrix plus a 3x3 normal matrix.
+    /// The normal matrix is uploaded rather than derived in the shader because inverting a mat3
+    /// per VERTEX is a real cost on dense meshes, and non-uniform scale makes the cheap
+    /// approximation wrong.</summary>
+    public const int FloatsPerInstance = 16 + 9;
 
     public Mesh(float[] vertices, ushort[]? indices = null, bool skinned = false)
     {
@@ -128,6 +135,66 @@ public sealed class Mesh : IDisposable
                 _gl.BufferData(BufferTargetARB.ElementArrayBuffer, (nuint)(_indexData32.Length * sizeof(uint)), p, BufferUsageARB.StaticDraw);
         }
 
+        _gl.BindVertexArray(0);
+    }
+
+    /// <summary>Attach a per-instance attribute layout to this mesh's VAO, reading from
+    /// <paramref name="instanceVbo"/>: model matrix at locations 5-8, normal matrix at 9-11, all
+    /// with divisor 1 so they advance once per instance instead of per vertex.
+    ///
+    /// <para>Set up once per mesh. The VAO remembers the binding, so later frames only have to
+    /// refill the buffer.</para></summary>
+    internal unsafe void BindInstanceBuffer(uint instanceVbo)
+    {
+        if (_instanceVbo == instanceVbo) return;
+        _instanceVbo = instanceVbo;
+
+        EnsureGl();
+        _gl.BindVertexArray(_vao);
+        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, instanceVbo);
+
+        uint stride = FloatsPerInstance * sizeof(float);
+        // mat4 model: four consecutive vec4 attributes — GL has no mat4 vertex attribute.
+        for (uint i = 0; i < 4; i++)
+        {
+            uint loc = 5 + i;
+            _gl.EnableVertexAttribArray(loc);
+            _gl.VertexAttribPointer(loc, 4, VertexAttribPointerType.Float, false, stride,
+                                    (void*)(i * 4 * sizeof(float)));
+            _gl.VertexAttribDivisor(loc, 1);
+        }
+        // mat3 normal matrix: three vec3s after the model matrix.
+        for (uint i = 0; i < 3; i++)
+        {
+            uint loc = 9 + i;
+            _gl.EnableVertexAttribArray(loc);
+            _gl.VertexAttribPointer(loc, 3, VertexAttribPointerType.Float, false, stride,
+                                    (void*)((16 + i * 3) * sizeof(float)));
+            _gl.VertexAttribDivisor(loc, 1);
+        }
+
+        _gl.BindVertexArray(0);
+        _gl.BindBuffer(BufferTargetARB.ArrayBuffer, 0);
+    }
+
+    /// <summary>Draw <paramref name="count"/> copies in one call, each reading its transform from
+    /// the instance buffer bound by <see cref="BindInstanceBuffer"/>.</summary>
+    public unsafe void DrawInstanced(int count)
+    {
+        if (count <= 0) return;
+        EnsureGl();
+        _gl.BindVertexArray(_vao);
+        if (_ibo != 0)
+        {
+            var type = _indexData32 != null ? DrawElementsType.UnsignedInt : DrawElementsType.UnsignedShort;
+            _gl.DrawElementsInstanced(Primitive, (uint)_indexCount, type, null, (uint)count);
+            GLStats.IncDrawCalls(_indexCount * count);
+        }
+        else
+        {
+            _gl.DrawArraysInstanced(Primitive, 0, (uint)_vertexCount, (uint)count);
+            GLStats.IncDrawCalls(_vertexCount * count);
+        }
         _gl.BindVertexArray(0);
     }
 

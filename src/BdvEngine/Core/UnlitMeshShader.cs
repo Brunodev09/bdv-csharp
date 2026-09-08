@@ -32,7 +32,8 @@ uniform mat4 u_proj, u_view, u_model;
 out vec2 v_uv;
 void main() { gl_Position = u_proj * u_view * u_model * vec4(a_pos, 1.0); v_uv = a_uv; }";
 
-    private const string Frag = @"#version 410 core
+    /// <summary>Shared with the instanced variant so the two can't drift.</summary>
+    internal const string Frag = @"#version 410 core
 in vec2 v_uv;
 uniform vec4 u_color;
 uniform sampler2D u_diffuse;

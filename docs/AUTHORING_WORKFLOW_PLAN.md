@@ -535,10 +535,27 @@ Separate from workflow. Ranked by whether they block shipping a 3D game.
 
 ### Bounded, but you'll hit them fast
 
-4. **No frustum culling, no instancing.** `MeshRenderer.Render` calls `Collect(scene.Root)` and
-   draws everything, one `mesh.Draw()` per object; no `DrawElementsInstanced` anywhere in the
-   engine. A 400-pine forest is 1600 draw calls of the same two meshes. (Culling was listed under
-   the previous plan's Phase 2; it didn't land.)
+4. ~~**No frustum culling, no instancing.**~~ ✅ **LANDED.** `Graphics/Frustum.cs` extracts the six
+   planes from a view-projection matrix (row-vector derivation, so it serves the perspective
+   camera, the 2D ortho camera and the sun's shadow frustum alike);
+   `Core/InstancedMeshShader.cs` adds instanced Lit/PBR/Unlit/depth variants reading the model and
+   normal matrices from vertex attributes; `MeshRenderer` walks the scene once and applies a
+   **separate frustum per pass**, then batches by `(Mesh, Material)`.
+
+   Measured: Valheim island **770 -> 16** draw calls, a 202-pine prefab forest **607 -> 8**, and a
+   1682-object grid **3366 -> 6**.
+
+   Two things this surfaced. **The shadow pass cannot share the camera's culling** — an object
+   behind the camera still casts into view, so each pass needs its own frustum. And **instancing
+   requires a shared mesh**: `Primitives.Cube()` used to return a fresh `Mesh` per call, so a loop
+   produced hundreds of GPU buffers that could never batch. `Primitives.*` now shares per spec,
+   while `Mesh.*` still hands out a private mesh.
+
+   Verified by `tools/check_culling.py`, which renders naive / cull-only / instanced-only / both
+   and asserts cost falls while the image holds. Culling is pixel-identical; instancing differs on
+   **11 pixels of 3.28M** (0.0003%), all on shadow and silhouette edges, because the instanced
+   vertex stage multiplies the same matrices in a different association order. A real bug moves
+   whole surfaces, which the threshold still catches.
 5. **Skybox + fog.** `Environment.Sky` is a clear colour. A gradient/cubemap sky plus distance
    fog is ~150 lines and buys more perceived quality per line than anything else here.
 6. **No transparency sort.** Billboards get a special late pass with `DepthMask(false)`; general

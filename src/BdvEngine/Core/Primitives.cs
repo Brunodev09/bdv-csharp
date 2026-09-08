@@ -18,9 +18,30 @@ public readonly struct MeshSpec
 /// </summary>
 public static class Primitives
 {
-    // The serialisable spec is stamped by the Mesh factories themselves (Mesh.Source), so these
-    // stay the thin wrappers they were.
-    public static MeshSpec Cube() => new(Mesh.Cube());
-    public static MeshSpec Sphere(int segments = 24, int rings = 16) => new(Mesh.Sphere(segments, rings));
-    public static MeshSpec Plane(float size = 1f) => new(Mesh.Plane(size));
+    // Meshes are SHARED per spec. Two reasons: 841 identical cubes should not be 841 GPU buffers,
+    // and the renderer batches instanced draws by (mesh, material) — so a loop calling Cube() would
+    // otherwise defeat instancing entirely by handing out a distinct mesh every time.
+    // Mesh.Cube()/Sphere()/Plane() still return a fresh, privately-owned mesh when you need one.
+    private static readonly Dictionary<string, Mesh> _shared = new();
+
+    public static MeshSpec Cube() => new(Shared("cube", Mesh.Cube));
+
+    public static MeshSpec Sphere(int segments = 24, int rings = 16)
+        => new(Shared($"sphere:{segments},{rings}", () => Mesh.Sphere(segments, rings)));
+
+    public static MeshSpec Plane(float size = 1f)
+        => new(Shared($"plane:{size.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+                      () => Mesh.Plane(size)));
+
+    private static Mesh Shared(string key, Func<Mesh> build)
+    {
+        if (_shared.TryGetValue(key, out var m)) return m;
+        m = build();
+        _shared[key] = m;
+        return m;
+    }
+
+    /// <summary>Drop the shared meshes (test isolation, or reclaiming buffers on a level swap).
+    /// Scenes still holding these keep working; only the NEXT call builds a new one.</summary>
+    public static void ClearShared() => _shared.Clear();
 }

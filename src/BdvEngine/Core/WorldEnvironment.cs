@@ -33,4 +33,12 @@ public sealed class WorldEnvironment
     /// <summary>Sun shadow settings. On by default — an unshadowed 3D scene reads as floating
     /// geometry, which is the single biggest thing separating "engine demo" from "game".</summary>
     public ShadowSettings Shadows { get; } = new();
+
+    /// <summary>Skip objects outside the camera (and the sun's) frustum. On by default; turn it off
+    /// to confirm a disappearing object is a culling bug rather than a scene bug.</summary>
+    public bool Culling = true;
+
+    /// <summary>Collapse repeated (mesh, material) pairs into one instanced draw call. On by
+    /// default; turn it off to A/B a rendering difference against the plain path.</summary>
+    public bool Instancing = true;
 }
