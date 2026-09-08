@@ -594,9 +594,20 @@ Separate from workflow. Ranked by whether they block shipping a 3D game.
    opaque marker behind them stays visible, which fails if depth writes stay on. Moving the camera
    to the far side changes the composite, confirming the sort follows the viewer.
 
-   Not covered: per-triangle sorting (this is per object, by distance to its origin) and
-   alpha-tested shadow casting for foliage. Transparent geometry is not instanced — a batch draws
-   in one order, which is the opposite of what sorting needs.
+   Not covered: per-triangle sorting (this is per object, by distance to its origin). Transparent
+   geometry is not instanced — a batch draws in one order, which is the opposite of what sorting
+   needs.
+
+   **Follow-up landed:** `BlendMode.Cutout` plus `AlphaCutoff` add alpha-tested (binary)
+   transparency for foliage. Cutout renders on the OPAQUE path — depth-written, instanced,
+   unsorted — with `discard` below the cutoff in the colour stages *and in all three depth
+   shaders*, so a leaf card casts a leaf-shaped shadow. The depth shaders gained UVs and a
+   uniform-branched texture fetch, which costs an opaque material nothing.
+
+   Verified by `tools/check_cutout.py`: a holed card's shadow loses 65% of its area versus the same
+   card without cutout, and never covers more. The card itself looks identical in both runs — GL
+   blending hides alpha-0 texels in the colour pass regardless — which is precisely why the bug was
+   easy to miss: the tell is the shadow, not the card.
 7. **Lighting ceiling.** 8 forward lights (`Core/MeshShader.cs:44`), unshadowed, no IBL — which
    is why `AGENTS.md` has to warn that PBR metals look muted.
 

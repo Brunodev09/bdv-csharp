@@ -18,6 +18,7 @@ public sealed class UnlitMeshShader : MeshShader
     {
         SetUniform("u_model", model);
         SetUniform("u_color", material.Color.ToVector4());
+        SetUniform("u_alphaCutoff", material.EffectiveCutoff);
         if (material.DiffuseTexture != null)
         {
             material.DiffuseTexture.Activate(0);
@@ -37,6 +38,11 @@ void main() { gl_Position = u_proj * u_view * u_model * vec4(a_pos, 1.0); v_uv =
 in vec2 v_uv;
 uniform vec4 u_color;
 uniform sampler2D u_diffuse;
+uniform float u_alphaCutoff;
 out vec4 fragColor;
-void main() { fragColor = texture(u_diffuse, v_uv) * u_color; }";
+void main() {
+    vec4 c = texture(u_diffuse, v_uv) * u_color;
+    if (u_alphaCutoff > 0.0 && c.a < u_alphaCutoff) discard;
+    fragColor = c;
+}";
 }

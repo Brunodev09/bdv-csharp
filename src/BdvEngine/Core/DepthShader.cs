@@ -15,15 +15,50 @@ public sealed class DepthShader : Shader
     public DepthShader() : base("depth_only") => Load(Vert, Frag);
 
     public void SetFrame(in Matrix4x4 lightViewProj) => SetUniform("u_lightViewProj", lightViewProj);
-    public void SetObject(in Matrix4x4 model) => SetUniform("u_model", model);
 
+    public void SetObject(in Matrix4x4 model, Material material)
+    {
+        SetUniform("u_model", model);
+        BindCutout(this, material);
+    }
+
+    /// <summary>Bind the alpha-test state shared by every depth variant. The texture is bound only
+    /// for a cutout material; otherwise the cutoff is 0 and the fragment never samples, so an
+    /// opaque depth pass costs exactly what it did before.</summary>
+    internal static void BindCutout(Shader shader, Material material)
+    {
+        float cutoff = material.EffectiveCutoff;
+        shader.SetUniform("u_alphaCutoff", cutoff);
+        if (cutoff <= 0f || material.DiffuseTexture == null) return;
+        material.DiffuseTexture.Activate(0);
+        shader.SetUniform("u_diffuse", 0);
+    }
+
+    /// <summary>
+    /// Depth-only fragment stage with alpha testing.
+    ///
+    /// <para>This is what makes a leaf card cast a leaf-shaped shadow instead of the rectangle it
+    /// is modelled as. The cutoff is a uniform, so the branch is coherent across the whole draw and
+    /// an opaque material never touches the texture unit.</para>
+    /// </summary>
     internal const string Frag = @"#version 410 core
-void main() { }";   // depth is written automatically; nothing else to do
+in vec2 v_uv;
+uniform sampler2D u_diffuse;
+uniform float u_alphaCutoff;
+void main() {
+    if (u_alphaCutoff > 0.0 && texture(u_diffuse, v_uv).a < u_alphaCutoff) discard;
+    // Depth is written automatically for whatever survives.
+}";
 
     private const string Vert = @"#version 410 core
 layout(location = 0) in vec3 a_pos;
+layout(location = 2) in vec2 a_uv;
 uniform mat4 u_lightViewProj, u_model;
-void main() { gl_Position = u_lightViewProj * u_model * vec4(a_pos, 1.0); }";
+out vec2 v_uv;
+void main() {
+    gl_Position = u_lightViewProj * u_model * vec4(a_pos, 1.0);
+    v_uv = a_uv;
+}";
 }
 
 /// <summary>Depth-only shader for skinned meshes — same skinning maths as
@@ -33,7 +68,12 @@ public sealed class SkinnedDepthShader : Shader
     public SkinnedDepthShader() : base("depth_only_skinned") => Load(Vert, DepthShader.Frag);
 
     public void SetFrame(in Matrix4x4 lightViewProj) => SetUniform("u_lightViewProj", lightViewProj);
-    public void SetObject(in Matrix4x4 model) => SetUniform("u_model", model);
+
+    public void SetObject(in Matrix4x4 model, Material material)
+    {
+        SetUniform("u_model", model);
+        DepthShader.BindCutout(this, material);
+    }
 
     public void SetJoints(Matrix4x4[] palette, int count)
     {
@@ -44,14 +84,17 @@ public sealed class SkinnedDepthShader : Shader
     private const string Vert = @"#version 410 core
 #define MAX_JOINTS 64
 layout(location = 0) in vec3 a_pos;
+layout(location = 2) in vec2 a_uv;
 layout(location = 3) in vec4 a_joints;
 layout(location = 4) in vec4 a_weights;
 uniform mat4 u_lightViewProj, u_model;
 uniform mat4 u_joints[MAX_JOINTS];
+out vec2 v_uv;
 
 int jointIndex(float f) { return int(clamp(f, 0.0, float(MAX_JOINTS - 1))); }
 
 void main() {
+    v_uv = a_uv;
     float wsum = dot(a_weights, vec4(1.0));
     mat4 skin;
     if (wsum > 1e-5) {

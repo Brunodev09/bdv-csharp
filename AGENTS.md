@@ -306,8 +306,34 @@ colliders. Swap in a spatial hash when a profile says so; the query API won't ch
 
 ## Transparency
 
-A material is alpha-blended when its colour has `A < 255` — **inferred automatically at
-construction**, so translucent things sort correctly without anyone remembering to say so.
+Three modes. A material is alpha-blended when its colour has `A < 255` — **inferred automatically
+at construction**, so translucent things sort correctly without anyone remembering to say so.
+**Cutout** has to be set explicitly, because its transparency lives in the texture and an opaque
+tint colour can't reveal it.
+
+| mode | for | behaviour |
+|---|---|---|
+| `Opaque` | most things | depth-written, instanced, unsorted |
+| `Cutout` | foliage, fences, grass | as Opaque, but texels below `AlphaCutoff` are `discard`ed — **including in the shadow pass**, so a leaf card casts a leaf-shaped shadow |
+| `Alpha` | glass, water | sorted far-to-near, no depth write, no shadow by default |
+
+```csharp
+// Foliage: binary transparency, still fully opaque machinery.
+var leaf = new Material("leaf", "leafTex", Color.White)
+{
+    Blend = BlendMode.Cutout,
+    AlphaCutoff = 0.5f,
+    DoubleSided = true,     // a flat card seen from both sides
+};
+```
+
+**Use `Cutout`, not `Alpha`, for foliage.** Sorting a thousand grass quads every frame to achieve a
+hard edge would be absurd — and `Alpha` doesn't cast shadows, so the grass would be unlit-looking
+and shadowless. Cutout keeps instancing and depth writes and gets the right shadow.
+
+A trap worth knowing: GL blending is enabled globally, so an alpha-0 texel blends away in the
+colour pass **whether or not** the material is a cutout. A leaf card therefore *looks* right
+without `Cutout` — and casts a rectangular shadow. The card is not the tell; the shadow is.
 
 ```csharp
 // Inferred: alpha 224 -> BlendMode.Alpha

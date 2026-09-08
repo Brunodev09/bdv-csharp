@@ -23,6 +23,7 @@ public sealed class LitMeshShader : MeshShader
         SetUniform("u_model", model);
         SetUniform("u_normalMatrix", normalMatrix);
         SetUniform("u_color", material.Color.ToVector4());
+        SetUniform("u_alphaCutoff", material.EffectiveCutoff);
         if (material.DiffuseTexture != null)
         {
             material.DiffuseTexture.Activate(0);
@@ -50,6 +51,8 @@ void main() {
 in vec3 v_normal; in vec2 v_uv; in vec3 v_fragPos;
 uniform vec4 u_color;
 uniform sampler2D u_diffuse;
+uniform float u_alphaCutoff;
+
 uniform vec3 u_ambientColor, u_viewPos;
 uniform int u_lightCount;
 uniform int u_lightType[MAX_LIGHTS];
@@ -91,6 +94,8 @@ float sunVisibility(vec3 fragPos, vec3 N, vec3 L) {
 
 void main() {
     vec4 tex = texture(u_diffuse, v_uv) * u_color;
+    // Cutout: discard before any shading work is done.
+    if (u_alphaCutoff > 0.0 && tex.a < u_alphaCutoff) discard;
     vec3 N = normalize(v_normal);
     vec3 V = normalize(u_viewPos - v_fragPos);
 

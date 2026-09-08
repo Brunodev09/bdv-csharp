@@ -345,6 +345,7 @@ internal sealed class MeshRenderer : IDisposable
                     // front-face culling in BeginPass would drop it out of the map entirely.
                     if (mat.DoubleSided) _gl.Disable(EnableCap.CullFace);
                     else _gl.Enable(EnableCap.CullFace);
+                    _instDepth.SetMaterial(mat);
                     UploadInstances(mesh, xforms);
                     mesh.DrawInstanced(xforms.Count);
                 }
@@ -358,7 +359,7 @@ internal sealed class MeshRenderer : IDisposable
                 {
                     if (mat.DoubleSided) _gl.Disable(EnableCap.CullFace);
                     else _gl.Enable(EnableCap.CullFace);
-                    _depth.SetObject(world);
+                    _depth.SetObject(world, mat);
                     mesh.Draw();
                 }
             }
@@ -375,7 +376,7 @@ internal sealed class MeshRenderer : IDisposable
                 else _gl.Enable(EnableCap.CullFace);
                 smc.Skin.UpdatePalette(world, _frame);
                 _skinnedDepth.SetJoints(smc.Skin.JointMatrices, smc.Skin.JointCount);
-                _skinnedDepth.SetObject(world);
+                _skinnedDepth.SetObject(world, smc.Material);
                 smc.Mesh.Draw();
             }
         }

@@ -57,6 +57,7 @@ public sealed class InstancedLitMeshShader : InstancedMeshShader
     public override void SetMaterial(Material material)
     {
         SetUniform("u_color", material.Color.ToVector4());
+        SetUniform("u_alphaCutoff", material.EffectiveCutoff);
         if (material.DiffuseTexture != null)
         {
             material.DiffuseTexture.Activate(0);
@@ -82,6 +83,7 @@ public sealed class InstancedPbrMeshShader : InstancedMeshShader
     public override void SetMaterial(Material material)
     {
         SetUniform("u_color", material.Color.ToVector4());
+        SetUniform("u_alphaCutoff", material.EffectiveCutoff);
         SetUniform("u_metallic", material.Metallic);
         SetUniform("u_roughness", material.Roughness);
         if (material.DiffuseTexture != null)
@@ -106,6 +108,7 @@ public sealed class InstancedUnlitMeshShader : InstancedMeshShader
     public override void SetMaterial(Material material)
     {
         SetUniform("u_color", material.Color.ToVector4());
+        SetUniform("u_alphaCutoff", material.EffectiveCutoff);
         if (material.DiffuseTexture != null)
         {
             material.DiffuseTexture.Activate(0);
@@ -121,9 +124,17 @@ public sealed class InstancedDepthShader : Shader
 
     public void SetFrame(in Matrix4x4 lightViewProj) => SetUniform("u_lightViewProj", lightViewProj);
 
+    /// <summary>Per-batch, not per-instance: every instance in a batch shares one material.</summary>
+    public void SetMaterial(Material material) => DepthShader.BindCutout(this, material);
+
     private const string Vert = @"#version 410 core
 layout(location = 0) in vec3 a_pos;
+layout(location = 2) in vec2 a_uv;
 layout(location = 5) in mat4 i_model;
 uniform mat4 u_lightViewProj;
-void main() { gl_Position = u_lightViewProj * i_model * vec4(a_pos, 1.0); }";
+out vec2 v_uv;
+void main() {
+    gl_Position = u_lightViewProj * i_model * vec4(a_pos, 1.0);
+    v_uv = a_uv;
+}";
 }

@@ -84,6 +84,7 @@ public sealed class SkinnedLitMeshShader : SkinnedMeshShader
         SetUniform("u_model", model);
         SetUniform("u_normalMatrix", normalMatrix);
         SetUniform("u_color", material.Color.ToVector4());
+        SetUniform("u_alphaCutoff", material.EffectiveCutoff);
         if (material.DiffuseTexture != null)
         {
             material.DiffuseTexture.Activate(0);
@@ -112,6 +113,7 @@ public sealed class SkinnedPbrMeshShader : SkinnedMeshShader
         SetUniform("u_model", model);
         SetUniform("u_normalMatrix", normalMatrix);
         SetUniform("u_color", material.Color.ToVector4());
+        SetUniform("u_alphaCutoff", material.EffectiveCutoff);
         SetUniform("u_metallic", material.Metallic);
         SetUniform("u_roughness", material.Roughness);
         if (material.DiffuseTexture != null)

@@ -11,6 +11,12 @@ public enum BlendMode
 {
     /// <summary>Writes depth, drawn in the fast batched pass, order doesn't matter.</summary>
     Opaque,
+    /// <summary>Binary transparency — foliage, fences, grass cards. Texels below
+    /// <see cref="Material.AlphaCutoff"/> are DISCARDED; everything else behaves exactly like
+    /// <see cref="Opaque"/>: depth-written, instanced, unsorted, and casting a correctly
+    /// leaf-shaped shadow. This, not <see cref="Alpha"/>, is what a leaf card wants — sorting a
+    /// thousand grass quads every frame to achieve a hard edge would be absurd.</summary>
+    Cutout,
     /// <summary>Alpha-blended: drawn after all opaque geometry, sorted back-to-front, and does NOT
     /// write depth. All three are required — without the sort, two panes composite differently
     /// depending on which happened to be drawn first; without disabling depth writes, the nearer
@@ -41,16 +47,24 @@ public sealed class Material : IDisposable
     /// single-sided meshes (e.g. heightmap terrain). Retires the old world-level cull toggle.</summary>
     public bool DoubleSided { get; set; }
 
-    /// <summary>Opaque or alpha-blended. Inferred at construction from the colour's alpha, so a
-    /// material built with a translucent colour sorts correctly without anyone remembering to say
-    /// so. Set it explicitly for a material whose transparency lives in its TEXTURE (foliage
-    /// cards, glass with an opaque tint) — the colour alone can't reveal that.</summary>
+    /// <summary>Opaque, cutout or alpha-blended. Inferred at construction from the colour's alpha,
+    /// so a material built with a translucent colour sorts correctly without anyone remembering to
+    /// say so. <see cref="BlendMode.Cutout"/> has to be set explicitly: its transparency lives in
+    /// the TEXTURE, and an opaque tint colour can't reveal that.</summary>
     public BlendMode Blend { get; set; }
 
-    /// <summary>Whether this material writes into the shadow map. Defaults to false for
-    /// alpha-blended materials: the depth pass has no alpha testing, so a translucent surface would
-    /// cast the solid silhouette of its geometry — water throwing a hard black rectangle across the
-    /// sea floor. Force it on for foliage once alpha-tested depth exists.</summary>
+    /// <summary>Alpha below which a texel is discarded, for <see cref="BlendMode.Cutout"/>. 0.5 is
+    /// the usual choice. Ignored by the other modes.</summary>
+    public float AlphaCutoff { get; set; } = 0.5f;
+
+    /// <summary>The cutoff the shaders should apply — 0 when this material isn't a cutout, which
+    /// is how the fragment stages know to skip the texture fetch entirely.</summary>
+    public float EffectiveCutoff => Blend == BlendMode.Cutout ? AlphaCutoff : 0f;
+
+    /// <summary>Whether this material writes into the shadow map. Defaults to false only for
+    /// <see cref="BlendMode.Alpha"/>: a translucent surface would cast the solid silhouette of its
+    /// geometry — water throwing a hard black rectangle across the sea floor. Cutout materials DO
+    /// cast, because the depth pass applies the same discard and so casts the leaf shape.</summary>
     public bool CastShadows { get; set; }
 
     /// <summary>True when this material needs the sorted, depth-write-off transparent pass.</summary>
@@ -94,7 +108,7 @@ public sealed class Material : IDisposable
         // making that automatic is what stops "my water renders on top of everything" being the
         // first thing every 3D scene runs into.
         Blend = color.A < 255 ? BlendMode.Alpha : BlendMode.Opaque;
-        CastShadows = Blend == BlendMode.Opaque;
+        CastShadows = Blend != BlendMode.Alpha;
         if (!string.IsNullOrEmpty(diffuseTextureName))
             DiffuseTexture = TextureManager.Get(diffuseTextureName);
         RecomputeBatchKey();

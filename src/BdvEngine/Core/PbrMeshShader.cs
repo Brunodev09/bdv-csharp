@@ -24,6 +24,7 @@ public sealed class PbrMeshShader : MeshShader
         SetUniform("u_model", model);
         SetUniform("u_normalMatrix", normalMatrix);
         SetUniform("u_color", material.Color.ToVector4());
+        SetUniform("u_alphaCutoff", material.EffectiveCutoff);
         SetUniform("u_metallic", material.Metallic);
         SetUniform("u_roughness", material.Roughness);
         if (material.DiffuseTexture != null)
@@ -53,6 +54,8 @@ void main() {
 in vec3 v_normal; in vec2 v_uv; in vec3 v_fragPos;
 uniform vec4 u_color;
 uniform sampler2D u_diffuse;
+uniform float u_alphaCutoff;
+
 uniform vec3 u_ambientColor, u_viewPos;
 uniform float u_metallic, u_roughness;
 uniform int u_lightCount;
@@ -118,6 +121,8 @@ vec3 fresnelSchlick(float ct, vec3 F0) {
 
 void main() {
     vec4 tex = texture(u_diffuse, v_uv) * u_color;
+    // Cutout: discard before any shading work is done.
+    if (u_alphaCutoff > 0.0 && tex.a < u_alphaCutoff) discard;
     vec3 albedo = tex.rgb;
 
     vec3 N = normalize(v_normal);
