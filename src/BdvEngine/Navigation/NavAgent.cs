@@ -21,9 +21,14 @@ namespace BdvEngine;
 /// </summary>
 public sealed class NavAgent : BaseComponent
 {
-    private readonly List<Vector3> _path = new();
+    private readonly NavPath _path = new();
     private int _index;
     private NavMesh? _mesh;
+
+    // ── link traversal state ──
+    private NavLink? _link;
+    private Vector3 _linkFrom, _linkTo;
+    private float _linkT;
 
     [Range(0.1f, 30f)] public float Speed = 3f;
 
@@ -45,8 +50,20 @@ public sealed class NavAgent : BaseComponent
     /// impossible" — worth telling apart before an NPC stands still looking broken.</summary>
     public bool PathFailed { get; private set; }
 
-    /// <summary>Current path, for debug drawing.</summary>
-    public IReadOnlyList<Vector3> Path => _path;
+    /// <summary>Current path, for debug drawing. Waypoints know which transitions are links.</summary>
+    public NavPath Path => _path;
+
+    /// <summary>The link being traversed right now, or null while walking. Read it to drive an
+    /// animation — the <see cref="NavLink.Kind"/> says whether this is a jump, a drop or a climb.</summary>
+    public NavLink? TraversingLink => _link;
+
+    /// <summary>Horizontal speed used while crossing a link. Separate from <see cref="Speed"/>
+    /// because a jump has its own pace.</summary>
+    [Range(0.1f, 30f)] public float LinkSpeed = 4f;
+
+    /// <summary>Peak height of the arc on a <see cref="NavLinkKind.Jump"/>, above the straight line
+    /// between its ends. Purely cosmetic — the destination is the same either way.</summary>
+    [Range(0f, 5f)] public float JumpArcHeight = 0.9f;
 
     public int WaypointIndex => _index;
 
@@ -68,6 +85,7 @@ public sealed class NavAgent : BaseComponent
         Arrived = false;
         PathFailed = false;
 
+        _link = null;
         if (_mesh == null || _owner == null) { PathFailed = true; Arrived = true; return false; }
 
         if (!_mesh.FindPath(_owner.WorldMatrix.Translation, destination, _path))
@@ -87,6 +105,7 @@ public sealed class NavAgent : BaseComponent
     {
         _path.Clear();
         _index = 0;
+        _link = null;
         Arrived = true;
     }
 
@@ -95,8 +114,11 @@ public sealed class NavAgent : BaseComponent
         if (Arrived || _owner == null || _index >= _path.Count) return;
 
         float dt = (float)deltaTime;
+
+        if (_link != null) { TraverseLink(dt); return; }
+
         var position = _owner.WorldMatrix.Translation;
-        var target = _path[_index];
+        var target = _path[_index].Position;
 
         // Horizontal only: the controller owns vertical motion, and steering toward a waypoint's
         // height would fight gravity on every slope.
@@ -108,9 +130,18 @@ public sealed class NavAgent : BaseComponent
 
         if (distance <= threshold)
         {
+            // Reaching a link's near end starts the traversal instead of advancing to the next
+            // waypoint on foot: the far end is not somewhere you can walk to from here.
+            var reached = _path[_index];
+            if (reached.IsLinkStart && _index + 1 < _path.Count)
+            {
+                BeginLink(reached.Link!, reached.Position, _path[_index + 1].Position);
+                return;
+            }
+
             _index++;
             if (_index >= _path.Count) { Arrived = true; return; }
-            target = _path[_index];
+            target = _path[_index].Position;
             toTarget = new Vector3(target.X - position.X, 0f, target.Z - position.Z);
             distance = toTarget.Length();
             if (distance < 1e-5f) return;
@@ -128,6 +159,53 @@ public sealed class NavAgent : BaseComponent
         else _owner.Transform.Position += direction * speed * dt;
 
         if (TurnSpeed > 0f) FaceAlong(direction, dt);
+    }
+
+    private void BeginLink(NavLink link, Vector3 from, Vector3 to)
+    {
+        _link = link;
+        _linkFrom = from;
+        _linkTo = to;
+        _linkT = 0f;
+
+        // Zero any accumulated fall speed, or the controller resumes a drop mid-jump the instant
+        // the traversal hands control back.
+        _owner.GetComponent<CharacterController>()?.SetVerticalVelocity(0f);
+    }
+
+    /// <summary>
+    /// Move along the active link, bypassing the character controller.
+    ///
+    /// <para>The controller is deliberately not used here: it exists to keep a body on the ground
+    /// and out of walls, and a jump is precisely the moment both of those are wrong. It resumes at
+    /// the far end.</para>
+    /// </summary>
+    private void TraverseLink(float dt)
+    {
+        var link = _link!;
+        float span = MathF.Max(Vector3.Distance(_linkFrom, _linkTo), 1e-4f);
+        _linkT += MathF.Max(LinkSpeed, 0.01f) * dt / span;
+
+        if (_linkT >= 1f)
+        {
+            _owner.Transform.Position = _linkTo;
+            _link = null;
+            _index++;
+            if (_index >= _path.Count) Arrived = true;
+            return;
+        }
+
+        var p = Vector3.Lerp(_linkFrom, _linkTo, _linkT);
+
+        // An arc on jumps only. A drop should fall along the straight line rather than launch
+        // upward first, and a climb is vertical already.
+        if (link.Kind == NavLinkKind.Jump && JumpArcHeight > 0f)
+            p.Y += MathF.Sin(_linkT * MathF.PI) * JumpArcHeight;
+
+        _owner.Transform.Position = p;
+
+        var flat = new Vector3(_linkTo.X - _linkFrom.X, 0f, _linkTo.Z - _linkFrom.Z);
+        if (TurnSpeed > 0f && flat.LengthSquared() > 1e-6f) FaceAlong(Vector3.Normalize(flat), dt);
     }
 
     private void FaceAlong(Vector3 direction, float dt)

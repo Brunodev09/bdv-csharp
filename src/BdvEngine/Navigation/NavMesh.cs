@@ -14,6 +14,9 @@ public sealed class NavPoly
     /// the shared edge each one is crossed through.</summary>
     public readonly List<NavPortal> Portals = new();
 
+    /// <summary>Indices into <see cref="NavMesh.Links"/> leaving this polygon.</summary>
+    public readonly List<int> LinkIds = new();
+
     public Vector3 Center => new((MinX + MaxX) * 0.5f, Y, (MinZ + MaxZ) * 0.5f);
     public float Width => MaxX - MinX;
     public float Depth => MaxZ - MinZ;
@@ -35,6 +38,106 @@ public readonly struct NavPortal
     public NavPortal(int neighbour, Vector3 a, Vector3 b) { Neighbour = neighbour; A = a; B = b; }
 
     public Vector3 Mid => (A + B) * 0.5f;
+}
+
+/// <summary>What kind of traversal an off-mesh link represents. The mesh treats them all the same;
+/// the tag exists so an agent can play the right animation and pick the right movement.</summary>
+public enum NavLinkKind
+{
+    /// <summary>Horizontal gap crossed under the agent's own power.</summary>
+    Jump,
+    /// <summary>Downward-only step off a ledge — cheap to take, impossible to reverse.</summary>
+    Drop,
+    /// <summary>Vertical traversal at a fixed speed: ladder, vine, rope.</summary>
+    Climb,
+    /// <summary>Anything the game defines — a door, a teleporter, a zipline.</summary>
+    Custom,
+}
+
+/// <summary>
+/// A connection between two points on the mesh that is NOT walkable adjacency: a jump across a gap,
+/// a drop off a ledge, a ladder, a teleporter.
+///
+/// <para>Links are what make a navmesh usable for real level design. Without them the reachable
+/// world is exactly the connected walkable surface, so a ledge you can obviously hop down is a dead
+/// end and two rooftops a metre apart are separate worlds.</para>
+/// </summary>
+public sealed class NavLink
+{
+    public int FromPoly;
+    public int ToPoly;
+    public Vector3 Start;
+    public Vector3 End;
+    public NavLinkKind Kind = NavLinkKind.Jump;
+
+    /// <summary>Multiplies the link's length when costing a route. Above 1 makes the pathfinder
+    /// prefer walking around — the usual want, since a jump is riskier than a detour and an agent
+    /// that leaps at every opportunity looks broken.</summary>
+    public float CostMultiplier = 2f;
+
+    /// <summary>False for a one-way link. Drops are one-way by nature: falling off a ledge is not
+    /// reversible.</summary>
+    public bool Bidirectional = true;
+
+    /// <summary>Set false to disable without removing — a closed door, a broken bridge.</summary>
+    public bool Enabled = true;
+
+    public float Length => Vector3.Distance(Start, End);
+}
+
+/// <summary>One step of a path: a position, plus the link being entered if this is where an agent
+/// leaves the walkable surface.</summary>
+public readonly struct NavWaypoint
+{
+    public readonly Vector3 Position;
+
+    /// <summary>The link this waypoint begins, or null for ordinary walking. When set, the NEXT
+    /// waypoint is the link's far end and the agent should traverse rather than walk to it.</summary>
+    public readonly NavLink? Link;
+
+    public NavWaypoint(Vector3 position, NavLink? link = null)
+    {
+        Position = position;
+        Link = link;
+    }
+
+    public bool IsLinkStart => Link != null;
+}
+
+/// <summary>A path as waypoints that know which transitions are links. Reused across queries —
+/// <see cref="Clear"/> keeps the capacity.</summary>
+public sealed class NavPath
+{
+    public readonly List<NavWaypoint> Waypoints = new();
+
+    public int Count => Waypoints.Count;
+    public NavWaypoint this[int i] => Waypoints[i];
+
+    public void Clear() => Waypoints.Clear();
+
+    /// <summary>True when any step of the route is an off-mesh link.</summary>
+    public bool UsesLinks
+    {
+        get
+        {
+            for (int i = 0; i < Waypoints.Count; i++) if (Waypoints[i].IsLinkStart) return true;
+            return false;
+        }
+    }
+
+    public float Length()
+    {
+        float d = 0f;
+        for (int i = 0; i < Waypoints.Count - 1; i++)
+            d += Vector3.Distance(Waypoints[i].Position, Waypoints[i + 1].Position);
+        return d;
+    }
+
+    public void CopyPositionsTo(List<Vector3> into)
+    {
+        into.Clear();
+        for (int i = 0; i < Waypoints.Count; i++) into.Add(Waypoints[i].Position);
+    }
 }
 
 /// <summary>
@@ -86,7 +189,55 @@ public sealed class NavMesh
 
     public bool IsEmpty => _polys.Count == 0;
 
+    private readonly List<NavLink> _links = new();
+
+    /// <summary>Every off-mesh link, in the order they were added.</summary>
+    public IReadOnlyList<NavLink> Links => _links;
+
     internal int Add(NavPoly p) { _polys.Add(p); return _polys.Count - 1; }
+
+    /// <summary>
+    /// Connect two points that are not walkably adjacent — a jump, a drop, a ladder, a door.
+    ///
+    /// <para>Both ends snap to whichever polygon they sit on; a link whose end is off the mesh is
+    /// rejected rather than added as a route to nowhere. Returns the link, or null if either end
+    /// found no polygon.</para>
+    /// </summary>
+    public NavLink? AddLink(Vector3 start, Vector3 end, NavLinkKind kind = NavLinkKind.Jump,
+                            bool bidirectional = true, float costMultiplier = 2f)
+    {
+        int from = NearestPoly(start), to = NearestPoly(end);
+        if (from < 0 || to < 0 || from == to) return null;
+
+        var link = new NavLink
+        {
+            FromPoly = from, ToPoly = to,
+            Start = _polys[from].ClampXZ(start.X, start.Z),
+            End = _polys[to].ClampXZ(end.X, end.Z),
+            Kind = kind,
+            Bidirectional = bidirectional,
+            CostMultiplier = costMultiplier,
+        };
+        return AddLink(link);
+    }
+
+    /// <summary>Add a fully-specified link. Used by the builder's auto-generation, which has
+    /// already resolved both polygons.</summary>
+    public NavLink AddLink(NavLink link)
+    {
+        int id = _links.Count;
+        _links.Add(link);
+        _polys[link.FromPoly].LinkIds.Add(id);
+        if (link.Bidirectional) _polys[link.ToPoly].LinkIds.Add(id);
+        return link;
+    }
+
+    /// <summary>Remove every link. Re-bake or re-generate after calling this.</summary>
+    public void ClearLinks()
+    {
+        _links.Clear();
+        for (int i = 0; i < _polys.Count; i++) _polys[i].LinkIds.Clear();
+    }
 
     internal void Link(int a, int b, Vector3 e0, Vector3 e1)
     {
@@ -149,6 +300,10 @@ public sealed class NavMesh
     // ── pathfinding ─────────────────────────────────────────────────────────
 
     private readonly List<int> _corridor = new();
+    /// <summary>Link used to ENTER _corridor[i], or -1 when it was walked into. This is what lets
+    /// the path builder split the corridor at links instead of funnelling straight through one.</summary>
+    private readonly List<int> _corridorLink = new();
+    private int[] _cameLink = Array.Empty<int>();
     private readonly PriorityQueue<int, float> _open = new();
     private float[] _gScore = Array.Empty<float>();
     private int[] _cameFrom = Array.Empty<int>();
@@ -166,6 +321,26 @@ public sealed class NavMesh
     /// </summary>
     public bool FindPath(Vector3 start, Vector3 end, List<Vector3> path)
     {
+        if (!FindPath(start, end, _scratchPath)) { path.Clear(); return false; }
+        _scratchPath.CopyPositionsTo(path);
+        return path.Count > 0;
+    }
+
+    private readonly NavPath _scratchPath = new();
+    private readonly List<Vector3> _runPath = new();
+    private readonly List<int> _run = new();
+
+    /// <summary>
+    /// Path from <paramref name="start"/> to <paramref name="end"/>, marking which transitions are
+    /// off-mesh links so an agent can jump or climb them rather than walking.
+    ///
+    /// <para>A link is a discrete transition, not walkable adjacency, so the corridor is split at
+    /// every link and each walkable run is funnelled on its own. Funnelling straight through a link
+    /// would produce a straight line from before it to after it — cutting the corner an agent has
+    /// to actually leap from.</para>
+    /// </summary>
+    public bool FindPath(Vector3 start, Vector3 end, NavPath path)
+    {
         path.Clear();
         if (_polys.Count == 0) return false;
 
@@ -177,15 +352,72 @@ public sealed class NavMesh
 
         if (s == t)
         {
-            path.Add(startPoint);
-            path.Add(endPoint);
+            path.Waypoints.Add(new NavWaypoint(startPoint));
+            path.Waypoints.Add(new NavWaypoint(endPoint));
             return true;
         }
 
         if (!SearchCorridor(s, t)) return false;
 
-        Funnel(startPoint, endPoint, path);
+        var runStart = startPoint;
+        _run.Clear();
+        _run.Add(_corridor[0]);
+
+        for (int i = 1; i < _corridor.Count; i++)
+        {
+            int linkId = _corridorLink[i];
+            if (linkId < 0) { _run.Add(_corridor[i]); continue; }
+
+            // The corridor crosses a link here. Close the current walkable run at the link's near
+            // end, emit the link, and begin a fresh run from its far end.
+            var link = _links[linkId];
+            bool forward = link.ToPoly == _corridor[i];
+            var enter = forward ? link.Start : link.End;
+            var exit = forward ? link.End : link.Start;
+
+            EmitRun(runStart, enter, path, link);
+
+            path.Waypoints.Add(new NavWaypoint(exit));
+            runStart = exit;
+            _run.Clear();
+            _run.Add(_corridor[i]);
+        }
+
+        EmitRun(runStart, endPoint, path, null);
         return path.Count > 0;
+    }
+
+    /// <summary>Funnel the polygons currently in <see cref="_run"/> and append them, tagging the
+    /// final waypoint with <paramref name="exitLink"/> when this run ends at one.</summary>
+    private void EmitRun(Vector3 from, Vector3 to, NavPath path, NavLink? exitLink)
+    {
+        _runPath.Clear();
+        if (_run.Count <= 1)
+        {
+            _runPath.Add(from);
+            if (Vector3.DistanceSquared(from, to) > 1e-6f) _runPath.Add(to);
+        }
+        else
+        {
+            FunnelRun(from, to, _runPath);
+        }
+
+        for (int i = 0; i < _runPath.Count; i++)
+        {
+            // Don't repeat the point a previous run already ended on.
+            if (path.Count > 0 && Vector3.DistanceSquared(path[^1].Position, _runPath[i]) < 1e-6f)
+                continue;
+
+            bool last = i == _runPath.Count - 1;
+            path.Waypoints.Add(new NavWaypoint(_runPath[i], last ? exitLink : null));
+        }
+
+        // A run whose points all collapsed still has to carry the link, or the traversal is lost.
+        if (exitLink != null && (path.Count == 0 || !path[^1].IsLinkStart))
+        {
+            if (path.Count > 0) path.Waypoints[^1] = new NavWaypoint(path[^1].Position, exitLink);
+            else path.Waypoints.Add(new NavWaypoint(to, exitLink));
+        }
     }
 
     /// <summary>A* over the polygon graph, filling <see cref="_corridor"/> with poly indices.</summary>
@@ -196,6 +428,7 @@ public sealed class NavMesh
         {
             _gScore = new float[n];
             _cameFrom = new int[n];
+            _cameLink = new int[n];
             _visitStamp = new int[n];
         }
 
@@ -206,6 +439,7 @@ public sealed class NavMesh
 
         _gScore[start] = 0f;
         _cameFrom[start] = -1;
+        _cameLink[start] = -1;
         _visitStamp[start] = _search;
         _open.Enqueue(start, Heuristic(start, goal));
 
@@ -214,8 +448,14 @@ public sealed class NavMesh
             if (current == goal)
             {
                 _corridor.Clear();
-                for (int at = goal; at != -1; at = _cameFrom[at]) _corridor.Add(at);
+                _corridorLink.Clear();
+                for (int at = goal; at != -1; at = _cameFrom[at])
+                {
+                    _corridor.Add(at);
+                    _corridorLink.Add(_cameLink[at]);
+                }
                 _corridor.Reverse();
+                _corridorLink.Reverse();
                 return true;
             }
 
@@ -235,6 +475,33 @@ public sealed class NavMesh
                 _visitStamp[next] = _search;
                 _gScore[next] = g;
                 _cameFrom[next] = current;
+                _cameLink[next] = -1;
+                _open.Enqueue(next, g + Heuristic(next, goal));
+            }
+
+            // Off-mesh links leave from the same polygon. Costed by length times the multiplier, so
+            // a jump can be made deliberately unattractive relative to walking round.
+            var linkIds = poly.LinkIds;
+            for (int i = 0; i < linkIds.Count; i++)
+            {
+                var link = _links[linkIds[i]];
+                if (!link.Enabled) continue;
+
+                bool forward = link.FromPoly == current;
+                if (!forward && !link.Bidirectional) continue;
+                int next = forward ? link.ToPoly : link.FromPoly;
+                if (next == current) continue;
+
+                var entry = forward ? link.Start : link.End;
+                float g = _gScore[current]
+                        + Vector3.Distance(poly.Center, entry)
+                        + link.Length * MathF.Max(link.CostMultiplier, 0.01f);
+
+                if (_visitStamp[next] == _search && g >= _gScore[next]) continue;
+                _visitStamp[next] = _search;
+                _gScore[next] = g;
+                _cameFrom[next] = current;
+                _cameLink[next] = linkIds[i];
                 _open.Enqueue(next, g + Heuristic(next, goal));
             }
         }
@@ -248,16 +515,16 @@ public sealed class NavMesh
     /// corner whenever they cross. Turns the corridor into the straight lines an agent should
     /// actually walk, rather than a tour of polygon centres.
     /// </summary>
-    private void Funnel(Vector3 start, Vector3 end, List<Vector3> path)
+    private void FunnelRun(Vector3 start, Vector3 end, List<Vector3> path)
     {
         // Portal list: the start point as a degenerate portal, each corridor portal oriented
         // left/right relative to travel, then the goal as another degenerate portal.
         var lefts = new List<Vector3> { start };
         var rights = new List<Vector3> { start };
 
-        for (int i = 0; i < _corridor.Count - 1; i++)
+        for (int i = 0; i < _run.Count - 1; i++)
         {
-            int from = _corridor[i], to = _corridor[i + 1];
+            int from = _run[i], to = _run[i + 1];
             var portal = FindPortal(from, to);
 
             // Orient the edge so "left" is genuinely on the left of the direction of travel; the

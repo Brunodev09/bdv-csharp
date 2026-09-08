@@ -556,10 +556,53 @@ of rectangles rather than one angled polygon, so the mesh carries more polys tha
 build would. Paths are still straight, because the funnel works on portal segments, not polygon
 shapes.
 
-**Not covered**: off-mesh links (jumps, ladders, doors), dynamic obstacle carving, local avoidance
-between agents, area costs, and partial paths toward an unreachable goal — `FindPath` fails
-outright rather than returning its best effort, which is deliberate: a pathfinder that quietly
-approximates sends agents walking confidently into walls.
+### Off-mesh links — jumps, drops, ladders, doors
+
+A navmesh without them is only as connected as the walkable surface, so an obvious hop down is a
+dead end and two rooftops a metre apart are separate worlds.
+
+```csharp
+// generated from geometry: probes outward from every open edge
+NavMeshBuilder.GenerateLinks(nav, new NavLinkSettings
+{
+    MaxJumpDistance = 3f, MaxDropHeight = 4f, MaxJumpUp = 0.8f,
+});
+
+// or placed by hand, for a door, a ladder, a teleporter
+nav.AddLink(bottomOfLadder, topOfLadder, NavLinkKind.Climb, bidirectional: true);
+```
+
+Ask for the richer path when you need to know *which* transitions are links:
+
+```csharp
+var path = new NavPath();
+nav.FindPath(from, to, path);
+if (path.UsesLinks) { }
+foreach (var wp in path.Waypoints)
+    if (wp.IsLinkStart) { /* wp.Link.Kind: Jump | Drop | Climb | Custom */ }
+```
+
+`NavAgent` traverses them automatically — arcing over a `Jump`, moving straight along a `Drop` —
+and exposes `TraversingLink` so you can drive an animation. It bypasses the `CharacterController`
+mid-link deliberately: the controller exists to keep a body grounded and out of walls, and a jump
+is exactly when both are wrong.
+
+**Costs discourage, they don't forbid.** `CostMultiplier` above 1 makes the pathfinder walk around
+when walking around is reasonable; an agent that leaps at every opportunity looks broken. Drops
+default cheaper than jumps, because dropping off a ledge is usually the natural move.
+
+**Drops are one-way.** Falling is not reversible, so a generated `Drop` links downward only.
+
+**Generation is conservative on purpose.** A ray at chest height must be clear between the two ends
+before a link is added — two polygons either side of a wall are near each other and unconnected,
+which is precisely the shape the generator hunts for, so without that check it links straight
+through walls. At most one link is kept per polygon pair, or a long ledge facing another produces
+one per sample.
+
+**Not covered**: dynamic obstacle carving, local avoidance between agents, area costs, and partial
+paths toward an unreachable goal — `FindPath` fails outright rather than returning its best effort,
+which is deliberate: a pathfinder that quietly approximates sends agents walking confidently into
+walls.
 
 The mesh is baked, not authored, so it is **not** part of `.scene.json` — bake it after loading.
 

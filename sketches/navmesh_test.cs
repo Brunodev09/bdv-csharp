@@ -27,6 +27,7 @@ var start = new Vector3(-8f, 0f, -8f);
 var goal = new Vector3(8f, 0f, 8f);
 var sealedSpot = new Vector3(0f, 0f, 14f);
 var platformTop = new Vector3(12f, 2f, -12f);
+var islandTop = new Vector3(12f, 2f, -21f);
 
 Sketch.Run(setup: w =>
 {
@@ -67,6 +68,11 @@ Sketch.Run(setup: w =>
             new Vector3(4, top, 1), rampMat);
     }
 
+    // ── an island the same height as the platform, across a 2m gap. Reachable ONLY by jumping:
+    //    it stands 2m above the ground and MaxJumpUp is well under that, so there is no way up
+    //    from below and no walkable route at all. ──
+    Box(w, "island", new Vector3(12f, 1f, -21f), new Vector3(6, 2, 6), rampMat);
+
     // ── the agent ──
     walker = new SimObject(9500, "walker");
     walker.Transform.Position = start;
@@ -84,7 +90,7 @@ Sketch.Run(setup: w =>
 
     nav = NavMeshBuilder.Build(new NavBakeSettings
     {
-        Bounds = new Bounds(new Vector3(-22, -2, -22), new Vector3(22, 12, 22)),
+        Bounds = new Bounds(new Vector3(-24, -2, -26), new Vector3(24, 12, 24)),
         CellSize = 0.4f,
         AgentRadius = 0.35f,
         AgentHeight = 1.8f,
@@ -178,6 +184,52 @@ void RunChecks()
     Check("open ground gives a straight path", openLen < openStraight * 1.05f,
           $"{openLen:F2}m vs {openStraight:F2}m straight ({open.Count} waypoints)");
 
+    // ── off-mesh links ──────────────────────────────────────────────────────
+    // The island is across a gap and 2m above the ground, so walking cannot reach it. That has to
+    // be true BEFORE links are generated, or the rest of this proves nothing.
+    var toIsland = new List<Vector3>();
+    bool walkable = nav.FindPath(start, islandTop, toIsland);
+    bool reachedIsland = walkable && toIsland.Count > 0
+                         && Vector3.Distance(toIsland[^1], islandTop) < 3f;
+    Check("island unreachable on foot", !reachedIsland, "no walkable route across the gap");
+
+    int links = NavMeshBuilder.GenerateLinks(nav, new NavLinkSettings
+    {
+        MaxJumpDistance = 3f, MaxDropHeight = 4f, MaxJumpUp = 0.8f,
+        SampleSpacing = 0.8f, AgentHeight = 1.8f,
+    });
+    Console.WriteLine($"NAV LINKS={links}");
+    Check("links were generated", links > 0, $"{links} links from open edges");
+
+    // THE assertion for link generation. Two polys either side of a wall are near each other and
+    // unconnected, which is exactly the shape the generator hunts for -- so without the clearance
+    // ray it links straight through walls, and the sealed chamber springs open.
+    var stillSealed = new NavPath();
+    bool cellNowReachable = nav.FindPath(start, sealedSpot, stillSealed)
+                            && stillSealed.Count > 0
+                            && Vector3.Distance(stillSealed[^1].Position, sealedSpot) < 2f;
+    Check("links never cross walls", !cellNowReachable,
+          cellNowReachable ? "SEALED CHAMBER BREACHED" : "sealed chamber still sealed");
+
+    var jumpPath = new NavPath();
+    bool nowReachable = nav.FindPath(start, islandTop, jumpPath);
+    bool landed = nowReachable && jumpPath.Count > 0
+                  && Vector3.Distance(jumpPath[^1].Position, islandTop) < 3f;
+    Check("island reachable via a link", landed && jumpPath.UsesLinks,
+          landed ? $"{jumpPath.Count} waypoints, usesLinks={jumpPath.UsesLinks}" : "still unreachable");
+
+    int linkSteps = 0;
+    NavLinkKind usedKind = NavLinkKind.Custom;
+    for (int i = 0; i < jumpPath.Count; i++)
+        if (jumpPath[i].IsLinkStart) { linkSteps++; usedKind = jumpPath[i].Link!.Kind; }
+    Check("path marks the link transition", linkSteps > 0,
+          $"{linkSteps} link step(s), kind={usedKind}");
+
+    // Drops are one-way: what falls off the island cannot climb back up the same way.
+    bool anyOneWay = false;
+    foreach (var l in nav.Links) if (!l.Bidirectional && l.Kind == NavLinkKind.Drop) anyOneWay = true;
+    Check("drops are one-way", anyOneWay, "at least one non-reversible drop link exists");
+
     // ── the agent actually walks it, on a fixed timestep so the result is deterministic ──
     agent.SetDestination(goal);
     bool routed = !agent.PathFailed;
@@ -192,6 +244,24 @@ void RunChecks()
     Console.WriteLine($"NAV WALK routed={routed} steps={steps} ended=({end.X:F2},{end.Z:F2}) miss={miss:F2}");
     Check("agent walks the path", routed && agent.Arrived && miss < 1.5f,
           $"{steps} steps ({steps / 60f:F1}s), {miss:F2}m from the goal");
+
+    // ── and traverses a link end to end ──
+    walker.Transform.Position = start;
+    agent.SetDestination(islandTop);
+    bool jumped = false;
+    int jumpSteps = 0;
+    while (!agent.Arrived && jumpSteps < 4000)
+    {
+        walker.Update(1.0 / 60.0);
+        if (agent.TraversingLink != null) jumped = true;
+        jumpSteps++;
+    }
+    var landedAt = walker.Transform.Position;
+    float islandMiss = new Vector2(landedAt.X - islandTop.X, landedAt.Z - islandTop.Z).Length();
+    Console.WriteLine($"NAV JUMP arrived={agent.Arrived} traversed={jumped} steps={jumpSteps} " +
+                      $"ended=({landedAt.X:F2},{landedAt.Y:F2},{landedAt.Z:F2})");
+    Check("agent traverses the link", agent.Arrived && jumped && islandMiss < 3f && landedAt.Y > 1.2f,
+          $"{jumpSteps} steps, landed y={landedAt.Y:F2}, {islandMiss:F2}m from target");
 
     Console.WriteLine();
     Console.WriteLine(failed == 0

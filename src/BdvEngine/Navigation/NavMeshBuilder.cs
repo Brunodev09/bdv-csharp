@@ -254,6 +254,200 @@ public static class NavMeshBuilder
         return rects;
     }
 
+
+    /// <summary>
+    /// Find and add jump and drop links automatically, by probing outward from every open edge of
+    /// the mesh.
+    ///
+    /// <para>An open edge is a polygon boundary with no portal across it — the lip of a ledge, the
+    /// near side of a gap, the rim of a platform. For each sample along one, this probes outward
+    /// for a landing polygon and, if the air between the two ends is clear, adds a link.</para>
+    ///
+    /// <para><b>The clearance check is not optional.</b> Two polygons either side of a wall are
+    /// exactly the geometry this looks for — near each other, unconnected — so without a ray
+    /// between the ends the generator cheerfully links straight through walls, which is worse than
+    /// having no links at all.</para>
+    ///
+    /// <para>At most one link is kept per ordered polygon pair (the shortest), or a 20m ledge
+    /// facing a 20m ledge would produce a link per sample.</para>
+    /// </summary>
+    public static int GenerateLinks(NavMesh mesh, NavLinkSettings settings)
+    {
+        var best = new Dictionary<(int From, int To), NavLink>();
+
+        for (int p = 0; p < mesh.Polys.Count; p++)
+        {
+            var poly = mesh.Polys[p];
+            foreach (var (point, outward) in OpenEdgeSamples(mesh, p, settings.SampleSpacing))
+                Probe(mesh, settings, best, p, poly, point, outward);
+        }
+
+        // Drops are one-way, so a pair joined by a drop one way and a jump the other keeps both.
+        int added = 0;
+        foreach (var link in best.Values)
+        {
+            mesh.AddLink(link);
+            added++;
+        }
+
+        if (settings.Verbose)
+        {
+            int jumps = 0, drops = 0;
+            foreach (var l in best.Values) { if (l.Kind == NavLinkKind.Drop) drops++; else jumps++; }
+            Console.WriteLine($"[nav] generated {added} off-mesh links ({jumps} jump, {drops} drop)");
+        }
+        return added;
+    }
+
+    private static void Probe(NavMesh mesh, NavLinkSettings settings,
+                              Dictionary<(int, int), NavLink> best,
+                              int fromPoly, NavPoly poly, Vector3 point, Vector3 outward)
+    {
+        // March outward, keeping the nearest DROP and the nearest LEVEL landing separately.
+        //
+        // Taking whichever came first was wrong, and wrong in a way that silently removed the
+        // interesting half of the feature: probing off a raised platform, the first thing under the
+        // probe is the floor two metres below, so every edge produced a drop and the march stopped
+        // before ever reaching the ledge across the gap. A level landing is a jump; a lower one is
+        // a drop; they are different traversals to different places, and both are worth having.
+        float step = MathF.Max(mesh.CellSize, 0.1f);
+        bool haveLevel = false, haveDrop = false;
+
+        for (float d = step; d <= settings.MaxJumpDistance && !haveLevel; d += step)
+        {
+            var probe = point + outward * d;
+
+            int landing = FindLanding(mesh, probe, point.Y, settings);
+            if (landing < 0 || landing == fromPoly) continue;
+            if (SharesPortal(poly, landing)) continue;   // already walkable; no link wanted
+
+            var target = mesh.Polys[landing];
+            var end = target.ClampXZ(probe.X, probe.Z);
+            float drop = point.Y - end.Y;
+            bool isDrop = drop > settings.MaxJumpUp;
+
+            if (isDrop && haveDrop) continue;            // already have the nearest drop
+            if (!HasClearance(point, end, settings)) continue;
+
+            Record(best, new NavLink
+            {
+                FromPoly = fromPoly,
+                ToPoly = landing,
+                Start = point,
+                End = end,
+                // A meaningful descent is a drop: one-way, because falling is not reversible.
+                Kind = isDrop ? NavLinkKind.Drop : NavLinkKind.Jump,
+                Bidirectional = !isDrop,
+                CostMultiplier = isDrop ? settings.DropCost : settings.JumpCost,
+            });
+
+            if (isDrop) haveDrop = true;
+            else haveLevel = true;
+        }
+    }
+
+    private static void Record(Dictionary<(int, int), NavLink> best, NavLink link)
+    {
+        var key = (link.FromPoly, link.ToPoly);
+        if (!best.TryGetValue(key, out var existing) || link.Length < existing.Length)
+            best[key] = link;
+    }
+
+    /// <summary>Polygon a probe point would land on: the highest one under it within the drop
+    /// limit, or one slightly above it within the jump-up limit.</summary>
+    private static int FindLanding(NavMesh mesh, Vector3 probe, float fromY, NavLinkSettings settings)
+    {
+        int best = -1;
+        float bestY = float.MinValue;
+
+        for (int i = 0; i < mesh.Polys.Count; i++)
+        {
+            var poly = mesh.Polys[i];
+            if (!poly.ContainsXZ(probe.X, probe.Z)) continue;
+
+            float dy = fromY - poly.Y;
+            if (dy > settings.MaxDropHeight) continue;      // too far to fall
+            if (dy < -settings.MaxJumpUp) continue;         // too high to reach
+
+            if (poly.Y > bestY) { bestY = poly.Y; best = i; }
+        }
+        return best;
+    }
+
+    private static bool SharesPortal(NavPoly poly, int other)
+    {
+        for (int i = 0; i < poly.Portals.Count; i++)
+            if (poly.Portals[i].Neighbour == other) return true;
+        return false;
+    }
+
+    /// <summary>Is there clear air between the two ends, at roughly chest height? This is what
+    /// stops the generator linking through walls.</summary>
+    private static bool HasClearance(Vector3 a, Vector3 b, NavLinkSettings settings)
+    {
+        float lift = settings.AgentHeight * 0.5f;
+        var from = a + new Vector3(0, lift, 0);
+        var to = b + new Vector3(0, lift, 0);
+        var delta = to - from;
+        float distance = delta.Length();
+        if (distance < 1e-4f) return false;
+        return !PhysicsWorld.Raycast(from, delta / distance, distance, out _, settings.LayerMask);
+    }
+
+    /// <summary>
+    /// Points along a polygon's edges that no portal covers, each with the outward normal of the
+    /// side it came from.
+    ///
+    /// <para>Subtracting the portal spans from each side is the whole trick: what remains is
+    /// exactly the boundary where the walkable surface stops, which is where a jump or drop can
+    /// begin.</para>
+    /// </summary>
+    private static IEnumerable<(Vector3 Point, Vector3 Outward)> OpenEdgeSamples(
+        NavMesh mesh, int index, float spacing)
+    {
+        var poly = mesh.Polys[index];
+        const float Eps = 1e-3f;
+        float step = MathF.Max(spacing, 0.05f);
+
+        // side, fixed coordinate, span to cover, outward direction, whether the span is along Z
+        var sides = new (float Fixed, float Lo, float Hi, Vector3 Out, bool AlongZ)[]
+        {
+            (poly.MaxX, poly.MinZ, poly.MaxZ, Vector3.UnitX, true),
+            (poly.MinX, poly.MinZ, poly.MaxZ, -Vector3.UnitX, true),
+            (poly.MaxZ, poly.MinX, poly.MaxX, Vector3.UnitZ, false),
+            (poly.MinZ, poly.MinX, poly.MaxX, -Vector3.UnitZ, false),
+        };
+
+        foreach (var (fixedCoord, lo, hi, outward, alongZ) in sides)
+        {
+            var covered = new List<(float Lo, float Hi)>();
+            foreach (var portal in poly.Portals)
+            {
+                bool onThisSide = alongZ
+                    ? MathF.Abs(portal.A.X - fixedCoord) < Eps && MathF.Abs(portal.B.X - fixedCoord) < Eps
+                    : MathF.Abs(portal.A.Z - fixedCoord) < Eps && MathF.Abs(portal.B.Z - fixedCoord) < Eps;
+                if (!onThisSide) continue;
+
+                float p0 = alongZ ? portal.A.Z : portal.A.X;
+                float p1 = alongZ ? portal.B.Z : portal.B.X;
+                covered.Add((MathF.Min(p0, p1), MathF.Max(p0, p1)));
+            }
+
+            for (float t = lo + step * 0.5f; t < hi; t += step)
+            {
+                bool blocked = false;
+                for (int i = 0; i < covered.Count && !blocked; i++)
+                    blocked = t >= covered[i].Lo - Eps && t <= covered[i].Hi + Eps;
+                if (blocked) continue;
+
+                var point = alongZ
+                    ? new Vector3(fixedCoord, poly.Y, t)
+                    : new Vector3(t, poly.Y, fixedCoord);
+                yield return (point, outward);
+            }
+        }
+    }
+
     /// <summary>Link rectangles that touch along an edge and are within step height of each other.
     /// The shared segment becomes the portal the funnel steers through.</summary>
     private static void LinkAdjacent(NavMesh mesh, float stepHeight)
@@ -295,4 +489,41 @@ public static class NavMeshBuilder
             }
         }
     }
+}
+
+/// <summary>Controls automatic off-mesh link generation. See
+/// <see cref="NavMeshBuilder.GenerateLinks"/>.</summary>
+public sealed class NavLinkSettings
+{
+    /// <summary>Furthest horizontal gap an agent can cross. Gaps wider than this are left
+    /// unconnected.</summary>
+    public float MaxJumpDistance = 3f;
+
+    /// <summary>Furthest an agent may fall. Drops beyond this are not linked — better a dead end
+    /// than a route that kills the agent taking it.</summary>
+    public float MaxDropHeight = 4f;
+
+    /// <summary>How far up a jump may also climb. Small: leaping onto a ledge above you is much
+    /// harder than dropping off one, and over-generous values produce links agents cannot make.</summary>
+    public float MaxJumpUp = 0.8f;
+
+    /// <summary>Spacing of probe points along a polygon's open edges. Finer finds more links and
+    /// costs more; the dedupe pass keeps the count sane either way.</summary>
+    public float SampleSpacing = 1f;
+
+    /// <summary>Agent height, for the clearance check between the two ends.</summary>
+    public float AgentHeight = 1.8f;
+
+    /// <summary>Layers treated as blocking when checking a link has clear air along it.</summary>
+    public int LayerMask = ~0;
+
+    /// <summary>Cost multiplier given to generated jump links. Above 1 so the pathfinder walks
+    /// around when walking around is reasonable.</summary>
+    public float JumpCost = 2.5f;
+
+    /// <summary>Cost multiplier for generated drops. Lower than a jump — dropping off a ledge is
+    /// usually the natural move rather than a risk.</summary>
+    public float DropCost = 1.5f;
+
+    public bool Verbose = true;
 }
