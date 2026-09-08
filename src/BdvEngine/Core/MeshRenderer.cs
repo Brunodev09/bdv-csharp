@@ -25,6 +25,7 @@ internal sealed class MeshRenderer : IDisposable
     private readonly InstancedPbrMeshShader _instPbr = new();
     private readonly InstancedUnlitMeshShader _instUnlit = new();
     private readonly InstancedDepthShader _instDepth = new();
+    private readonly SkyShader _sky = new();
     private ShadowMap? _shadowMap;
 
     /// <summary>Below this many copies of one (mesh, material), a plain loop beats filling and
@@ -120,6 +121,7 @@ internal sealed class MeshRenderer : IDisposable
             RenderShadowPass(cam, env);
         }
 
+        var sunToward = Vector3.Normalize(-env.Sun.Direction);
         var frame = new FrameParams(
             cam.ProjectionMatrix(vw, vh), cam.ViewMatrix, cam.Position,
             env.Ambient, _lights, _lightCount,
@@ -128,7 +130,12 @@ internal sealed class MeshRenderer : IDisposable
             shadowBias: shadowCfg.Bias,
             shadowTexel: _shadowMap != null ? 1f / _shadowMap.Resolution : 0f,
             shadowSoftness: shadowCfg.SoftnessTexels,
-            shadowStrength: shadowCfg.Strength);
+            shadowStrength: shadowCfg.Strength,
+            sky: env.SkyGradient, fog: env.Fog,
+            sunToward: sunToward, sunTint: env.Sun.Color);
+
+        // Sky first, in place of the clear: no depth trick needed, and it costs what the clear did.
+        if (env.SkyGradient.Enabled) DrawSky(env, cam, sunToward, vw, vh);
 
         if (shadows) _shadowMap!.BindForReading();
 
@@ -138,6 +145,26 @@ internal sealed class MeshRenderer : IDisposable
 
         DrawSkinned(frame);
         DrawBillboards(frame, cam);
+    }
+
+    /// <summary>Fullscreen gradient sky. Depth test and write are off — it fills every pixel and
+    /// nothing has been drawn yet, so there is nothing to occlude or be occluded by.</summary>
+    private void DrawSky(WorldEnvironment env, Camera cam, Vector3 sunToward, int vw, int vh)
+    {
+        var vp = cam.ViewMatrix * cam.ProjectionMatrix(vw, vh);
+        if (!Matrix4x4.Invert(vp, out var invVp)) return;
+
+        _gl.Disable(EnableCap.DepthTest);
+        _gl.DepthMask(false);
+        _gl.Disable(EnableCap.CullFace);
+
+        _sky.Use();
+        _sky.SetSky(env.SkyGradient, sunToward, env.Sun.Color);
+        _sky.SetCamera(invVp, cam.Position);
+        _quad.Draw();
+
+        _gl.DepthMask(true);
+        _gl.Enable(EnableCap.DepthTest);
     }
 
     /// <summary>Split the draw queue into batches that are worth instancing and the rest.
@@ -466,6 +493,7 @@ internal sealed class MeshRenderer : IDisposable
         _instPbr.Dispose();
         _instUnlit.Dispose();
         _instDepth.Dispose();
+        _sky.Dispose();
         if (_instanceVbo != 0) _gl.DeleteBuffer(_instanceVbo);
         _shadowMap?.Dispose();
         _billboard.Dispose();

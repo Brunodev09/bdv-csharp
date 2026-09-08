@@ -556,8 +556,23 @@ Separate from workflow. Ranked by whether they block shipping a 3D game.
    **11 pixels of 3.28M** (0.0003%), all on shadow and silhouette edges, because the instanced
    vertex stage multiplies the same matrices in a different association order. A real bug moves
    whole surfaces, which the threshold still catches.
-5. **Skybox + fog.** `Environment.Sky` is a clear colour. A gradient/cubemap sky plus distance
-   fog is ~150 lines and buys more perceived quality per line than anything else here.
+5. ~~**Skybox + fog.**~~ ✅ **LANDED.** `Graphics/SkyShader.cs` adds a procedural gradient sky
+   (horizon / zenith / below-horizon, plus a two-lobe sun glow that tracks `Environment.Sun`) and
+   exponential-squared distance fog. Both off by default: enabling the sky REPLACES
+   `Environment.Sky` as the background, so it isn't strictly an improvement the way shadows and
+   culling were.
+
+   The gradient function is one GLSL string shared by the sky shader and the lit/PBR fragments, so
+   **fog blends toward the sky in the view direction** — distant geometry dissolves into the actual
+   horizon rather than into a flat colour that only matches from one angle.
+
+   The sky is drawn as a screen-covering quad BEFORE the meshes, in place of the clear. That avoids
+   the usual skybox depth trick (`gl_Position.z = w` plus a LEQUAL depth func) entirely and costs
+   what the clear it replaces did. Fog is applied after tone-map and gamma in the PBR path, since
+   the sky it blends toward is already display-space.
+
+   Verified by `sketches/sky_test.cs` (midday / dusk / off). With both disabled the sky pixel is
+   byte-exact `(140,168,209)` — the old flat clear — and all seven other gates pass unchanged.
 6. **No transparency sort.** Billboards get a special late pass with `DepthMask(false)`; general
    alpha-blended materials have no back-to-front queue. Water, glass, and foliage cards will all
    render wrong.

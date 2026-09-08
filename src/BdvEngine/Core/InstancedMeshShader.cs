@@ -51,6 +51,7 @@ public sealed class InstancedLitMeshShader : InstancedMeshShader
         SetUniform("u_view", f.View);
         SetLights(f);
         SetShadow(f);
+        SetSkyFog(f);
     }
 
     public override void SetMaterial(Material material)
@@ -75,6 +76,7 @@ public sealed class InstancedPbrMeshShader : InstancedMeshShader
         SetUniform("u_view", f.View);
         SetLights(f);
         SetShadow(f);
+        SetSkyFog(f);
     }
 
     public override void SetMaterial(Material material)

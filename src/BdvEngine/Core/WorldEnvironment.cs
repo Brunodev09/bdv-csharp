@@ -41,4 +41,11 @@ public sealed class WorldEnvironment
     /// <summary>Collapse repeated (mesh, material) pairs into one instanced draw call. On by
     /// default; turn it off to A/B a rendering difference against the plain path.</summary>
     public bool Instancing = true;
+
+    /// <summary>Procedural gradient sky. Off by default — enabling it REPLACES <see cref="Sky"/>
+    /// as the background, and a flat clear colour is right for plenty of scenes.</summary>
+    public SkySettings SkyGradient { get; } = new();
+
+    /// <summary>Distance fog. Off by default; fog is an art choice, not a fix.</summary>
+    public FogSettings Fog { get; } = new();
 }

@@ -304,6 +304,41 @@ colliders. Swap in a spatial hash when a profile says so; the query API won't ch
 
 ---
 
+## Sky and fog
+
+Both **off by default** — turning the sky on replaces `Environment.Sky` as the background, and fog
+is an art choice, not a fix. With them off, rendering is exactly what it was.
+
+```csharp
+var sky = w.Environment.SkyGradient;
+sky.Enabled = true;
+sky.Horizon = new Vector3(0.92f, 0.52f, 0.30f);   // colour at the horizon
+sky.Zenith  = new Vector3(0.10f, 0.16f, 0.38f);   // straight up
+sky.Ground  = new Vector3(0.14f, 0.12f, 0.13f);   // below the horizon
+sky.SunGlow = 1.4f;                                // 0 disables the glow
+
+var fog = w.Environment.Fog;
+fog.Enabled = true;
+fog.Density = 0.0075f;      // visibility ends around 2.5 / Density world units
+fog.UseSkyColor = true;     // blend toward the sky in the view direction
+fog.Color = new Vector3(0.6f, 0.7f, 0.85f);   // used when UseSkyColor is off, or the sky is
+```
+
+The sun glow tracks `Environment.Sun` automatically, so a day/night cycle that moves the sun moves
+the glow with it — drive `Horizon`/`Zenith` from the same clock and you get a sunset.
+
+**Fog blends toward the sky in the direction you're looking**, not toward a flat colour, so distant
+geometry dissolves into the actual horizon instead of into a grey that only matches from one angle.
+That needs the sky enabled; with it off, fog falls back to `fog.Color`.
+
+`Density` is exponential-squared: doubling it roughly halves visibility. A linear ramp was rejected
+because it has a visible edge where it starts, which reads as a wall of haze rather than distance.
+
+**Fog does not apply to `Materials.Unlit`.** Unlit means "raw colour, no scene lighting" — it's for
+debug helpers and UI-ish 3D, which shouldn't dissolve into the distance.
+
+---
+
 ## Culling and instancing
 
 Both on by default; both change cost, never the picture.

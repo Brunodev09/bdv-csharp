@@ -76,6 +76,7 @@ public sealed class SkinnedLitMeshShader : SkinnedMeshShader
         SetUniform("u_view", f.View);
         SetLights(f);
         SetShadow(f);
+        SetSkyFog(f);
     }
 
     public override void SetObject(in Matrix4x4 model, in Matrix4x4 normalMatrix, Material material)
@@ -103,6 +104,7 @@ public sealed class SkinnedPbrMeshShader : SkinnedMeshShader
         SetUniform("u_view", f.View);
         SetLights(f);
         SetShadow(f);
+        SetSkyFog(f);
     }
 
     public override void SetObject(in Matrix4x4 model, in Matrix4x4 normalMatrix, Material material)

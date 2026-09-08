@@ -15,6 +15,7 @@ public sealed class LitMeshShader : MeshShader
         SetUniform("u_view", f.View);
         SetLights(f);
         SetShadow(f);
+        SetSkyFog(f);
     }
 
     public override void SetObject(in Matrix4x4 model, in Matrix4x4 normalMatrix, Material material)
@@ -56,6 +57,8 @@ uniform vec3 u_lightVec[MAX_LIGHTS];
 uniform vec3 u_lightColor[MAX_LIGHTS];
 uniform float u_lightRange[MAX_LIGHTS];
 out vec4 fragColor;
+" + SkyShader.SkyGlsl + SkyShader.FogGlsl + @"
+
 
 uniform int u_shadowOn;
 uniform mat4 u_lightViewProj;
@@ -110,6 +113,6 @@ void main() {
         float vis = (i == 0) ? sunVisibility(v_fragPos, N, L) : 1.0;
         lit += (diff + spec) * u_lightColor[i] * att * vis;
     }
-    fragColor = vec4(lit * tex.rgb, tex.a);
+    fragColor = vec4(applyFog(lit * tex.rgb, v_fragPos, u_viewPos), tex.a);
 }";
 }

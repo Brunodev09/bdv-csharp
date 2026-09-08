@@ -31,17 +31,26 @@ public readonly struct FrameParams
     public readonly Matrix4x4 LightViewProj;
     public readonly float ShadowBias, ShadowTexel, ShadowSoftness, ShadowStrength;
 
+    /// <summary>Sky + fog. Fog samples the sky gradient in the view direction, so distant geometry
+    /// dissolves into the actual horizon rather than into a flat colour.</summary>
+    public readonly SkySettings? Sky;
+    public readonly FogSettings? Fog;
+    public readonly Vector3 SunToward, SunTint;
+
     public FrameParams(Matrix4x4 proj, Matrix4x4 view, Vector3 viewPos, Vector3 ambient,
                        GpuLight[] lights, int lightCount,
                        bool shadowsOn = false, Matrix4x4 lightViewProj = default,
                        float shadowBias = 0f, float shadowTexel = 0f,
-                       float shadowSoftness = 1f, float shadowStrength = 0.75f)
+                       float shadowSoftness = 1f, float shadowStrength = 0.75f,
+                       SkySettings? sky = null, FogSettings? fog = null,
+                       Vector3 sunToward = default, Vector3 sunTint = default)
     {
         Proj = proj; View = view; ViewPos = viewPos; Ambient = ambient;
         Lights = lights; LightCount = lightCount;
         ShadowsOn = shadowsOn; LightViewProj = lightViewProj;
         ShadowBias = shadowBias; ShadowTexel = shadowTexel;
         ShadowSoftness = shadowSoftness; ShadowStrength = shadowStrength;
+        Sky = sky; Fog = fog; SunToward = sunToward; SunTint = sunTint;
     }
 }
 
@@ -74,6 +83,33 @@ public abstract class MeshShader : Shader
         SetUniform("u_shadowTexel", f.ShadowTexel);
         SetUniform("u_shadowSoft", f.ShadowSoftness);
         SetUniform("u_shadowStrength", f.ShadowStrength);
+    }
+
+    /// <summary>Shared helper for lit families: bind the sky gradient and fog parameters. The sky
+    /// uniforms are bound even when the gradient is disabled, because fog can still fall back to a
+    /// flat colour and the shader reads the same names either way.</summary>
+    protected void SetSkyFog(in FrameParams f)
+    {
+        bool fogOn = f.Fog is { Enabled: true };
+        SetUniform("u_fogOn", fogOn ? 1 : 0);
+        if (!fogOn) return;
+
+        var fog = f.Fog!;
+        SetUniform("u_fogDensity", fog.Density);
+
+        // Fog matches the sky only when there IS a sky; otherwise it would blend toward a gradient
+        // nobody can see, and distant geometry would fade to the wrong colour.
+        bool useSky = fog.UseSkyColor && f.Sky is { Enabled: true };
+        SetUniform("u_fogUseSky", useSky ? 1 : 0);
+        SetUniform("u_fogColor", fog.Color);
+
+        var sky = f.Sky ?? new SkySettings();
+        SetUniform("u_skyHorizon", sky.Horizon);
+        SetUniform("u_skyZenith", sky.Zenith);
+        SetUniform("u_skyGround", sky.Ground);
+        SetUniform("u_sunDir", f.SunToward);
+        SetUniform("u_sunTint", f.SunTint);
+        SetUniform("u_sunGlow", sky.SunGlow);
     }
 
     /// <summary>Shared helper for lit families: bind ambient, view position and the light array.</summary>

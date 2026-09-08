@@ -16,6 +16,7 @@ public sealed class PbrMeshShader : MeshShader
         SetUniform("u_view", f.View);
         SetLights(f);
         SetShadow(f);
+        SetSkyFog(f);
     }
 
     public override void SetObject(in Matrix4x4 model, in Matrix4x4 normalMatrix, Material material)
@@ -62,6 +63,8 @@ uniform float u_lightRange[MAX_LIGHTS];
 out vec4 fragColor;
 
 const float PI = 3.14159265359;
+" + SkyShader.SkyGlsl + SkyShader.FogGlsl + @"
+
 
 uniform int u_shadowOn;
 uniform mat4 u_lightViewProj;
@@ -151,6 +154,8 @@ void main() {
     vec3 color = ambient + Lo;
     color = color / (color + vec3(1.0));       // Reinhard tone map
     color = pow(color, vec3(1.0 / 2.2));        // gamma
-    fragColor = vec4(color, tex.a);
+    // Fog AFTER tone-map + gamma: the sky it blends toward is already display-space, so fogging
+    // before would push distant geometry through the tone curve twice and wash it out.
+    fragColor = vec4(applyFog(color, v_fragPos, u_viewPos), tex.a);
 }";
 }
